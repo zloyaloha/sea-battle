@@ -1,0 +1,27 @@
+#pragma once
+#include <fcntl.h>
+#include <unistd.h>
+#include <string>
+#include <cstring>
+enum Commands {
+    login = 0,
+    create_user = 1
+};
+
+struct Message {
+    Message(Commands cmd, std::string msg) {
+        _cmd = cmd;
+        strcpy(_data, msg.c_str());
+    }
+    Message() = default;
+    Commands _cmd;
+    char _data[64];
+};
+
+void send(int fd, Message &msg) {
+    write(fd, &msg, sizeof(msg));
+}
+
+size_t recv(int fd, Message &msg) {
+    return read(fd, &msg, sizeof(msg));
+}
