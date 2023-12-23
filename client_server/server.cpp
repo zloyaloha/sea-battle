@@ -7,10 +7,13 @@
 #include <sqlite3.h> 
 #include <list>
 #include <algorithm>
+#include <queue>
+#include <vector>
+#include <chrono>
+#include <errno.h>
 
-std::list<std::pair<int, std::string>> authorized_proccess;
-std::string myfifo_read = "/tmp/myfifo_read";
-std::string myfifo_write = "/tmp/myfifo_write";
+std::string myfifo_write_default = "/tmp/myfifo_s-c_def";
+std::string myfifo_read_default = "/tmp/myfifo_c-s_def";
 
 std::pair<int, int> user_stats(const std::string& username) {
     sqlite3* db;
@@ -130,65 +133,123 @@ bool add_user(const std::string &username) {
     return (status == 1);
 }
 
-bool is_authorized(int processId, const std::string& processName) {
+class Server {
+    public:
+        std::vector<int> _fdR;
+        std::unordered_map<int, int> _pid_fdW;
+        std::unordered_map<int, std::string> authorized_proccess;
+        std::queue<Message> _msgs;
+        Server() {
+            mkfifo(myfifo_read_default.c_str(), 0666);
+            mkfifo(myfifo_write_default.c_str(), 0666);
+            int fd_default_write = open(myfifo_write_default.c_str(), O_WRONLY);
+            int fd_default_read = open(myfifo_read_default.c_str(), O_RDONLY | O_NONBLOCK);
+            _fdR.push_back(fd_default_read);
+            _pid_fdW.insert({0, fd_default_write});
+        }
+        ~Server() {
+            for (auto fd: _fdR) {
+                close(fd);
+            }
+            for (auto pid: _pid_fdW) {
+                close(pid.second);
+            }
+        }
+        bool is_authorized(int processId) {
+            auto elem = authorized_proccess.find(processId);
+            return (elem != authorized_proccess.end());
+        }
+        // void open_fifo() {
+        //     int fd_read;
+        //     int fd_write;
+        //     mkfifo(myfifo_read.c_str(), 0666);
+        //     mkfifo(myfifo_write.c_str(), 0666);
+        //     int fdW = open(myfifo_read.c_str(), O_WRONLY);
+        //     int fdR = open(myfifo_write.c_str(), O_RDONLY);
+        // }
+        void try_recv() {
+            auto start = std::chrono::system_clock::now();
+            while(true) {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count() > 100) {
+                    break;
+                }
+                for (auto fd: _fdR) {
+                    Message msg_from_client;
+                    int num_of_bytes = recv(fd, msg_from_client);
+                    // std::cout << "huynul v o4ered" << std::endl;
+                    if (num_of_bytes > 0) {
+                        _msgs.push(msg_from_client);
+                    }
+                }
+            }
+        }
+        void send_to(int pid, Message &msg) {
+            auto elem = _pid_fdW.find(pid);
+            if (elem != _pid_fdW.end()) {
+                send((*elem).second, msg);
+            }
+        }
+        void exec() {
+            while (1) {
+                this->try_recv();
+                while (!_msgs.empty()) {
+                    Message msg_to_make;
+                    msg_to_make = _msgs.back();
+                    _msgs.pop();
+                    if (msg_to_make._cmd == create_user) {
+                        bool success = add_user(msg_to_make._data);
+                        if (success) {
+                            Message msg_to_client(Commands::success, msg_to_make._data, -1);
+                            send_to(msg_to_make._pid, msg_to_client);   
+                        } else {
+                            Message msg_to_client(Commands::fail, msg_to_make._data, -1);
+                            send_to(msg_to_make._pid, msg_to_client);      
+                        }
+                    } else if (msg_to_make._cmd == Commands::login) {
+                        bool success = autorize(msg_to_make._data);
+                        if (success) {
+                            authorized_proccess.insert({msg_to_make._pid, std::string(msg_to_make._data)});
+                            Message msg_to_client(Commands::success, msg_to_make._data, -1);
+                            send_to(msg_to_make._pid, msg_to_client);      
+                        } else {
+                            Message msg_to_client(Commands::fail, msg_to_make._data, -1);
+                            send_to(msg_to_make._pid, msg_to_client);      
+                        }
+                        for (auto iter: authorized_proccess) {
+                            std::cout << iter.first << ' ' << iter.second << std::endl;
+                        }
+                    } else if (msg_to_make._cmd == Commands::stats) {
+                        if (is_authorized(msg_to_make._pid)) {
+                            auto [win, lose] = user_stats(msg_to_make._data);
+                            Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
+                            send_to(msg_to_make._pid, msg_to_client);   
+                        } else {
+                            Message msg_to_client(Commands::fail, "not_autorized", -1);
+                            send_to(msg_to_make._pid, msg_to_client);   
+                        }
+                    } else if (msg_to_make._cmd == Commands::connect) {
+                        std::cout << "Making connection pipe for proc " << msg_to_make._pid << std::endl;
+                        std::string name_fifo_read = "/tmp/myfifo_c-s_" + std::to_string(msg_to_make._pid);
+                        std::string name_fifo_write = "/tmp/myfifo_s-c_" + std::to_string(msg_to_make._pid);
+                        mkfifo(name_fifo_read.c_str(), 0666);
+                        mkfifo(name_fifo_write.c_str(), 0666);
 
-    auto it = std::find(authorized_proccess.begin(), authorized_proccess.end(), std::make_pair(processId, processName));
-    
-    return (it != authorized_proccess.end());
-}
+                        int fd_write= open(name_fifo_write.c_str(), O_WRONLY);
+                        int fd_read = open(name_fifo_read.c_str(), O_RDONLY);
+                        _fdR.push_back(fd_read);
+                        _pid_fdW.insert({msg_to_make._pid, fd_write});
+                        auto elem = _pid_fdW.find(msg_to_make._pid);
+                        Message msg_to_client(Commands::success, "Succesfully connected", -1);
+                        if (elem != _pid_fdW.end()) {
+                            send((*elem).second, msg_to_client);
+                        }
+                    }
+                }
+            }
+        }
+};
 
- 
 int main() {
-
-    int fd_read;
-    int fd_write;
-    mkfifo(myfifo_read.c_str(), 0666);
-    mkfifo(myfifo_write.c_str(), 0666);
-    int fdW = open(myfifo_read.c_str(), O_WRONLY);
-    int fdR = open(myfifo_write.c_str(), O_RDONLY);
-    Message msg_from_client;
-
-    while (1) {
-        size_t num_of_bytes = recv(fdR, msg_from_client);
-        if (num_of_bytes == -1) {
-            std::cout << "no data" << std::endl;
-            continue;
-        }
-        if (msg_from_client._cmd == create_user) {
-            bool success = add_user(msg_from_client._data);
-            if (success) {
-                Message msg_to_client(Commands::success, msg_from_client._data, -1);
-                send(fdW, msg_to_client);   
-            } else {
-                Message msg_to_client(Commands::fail, msg_from_client._data, -1);
-                send(fdW, msg_to_client);   
-            }
-        } else if (msg_from_client._cmd == Commands::login) {
-            bool success = autorize(msg_from_client._data);
-            if (success) {
-                authorized_proccess.push_back(std::make_pair(msg_from_client._pid, std::string(msg_from_client._data)));
-                Message msg_to_client(Commands::success, msg_from_client._data, -1);
-                send(fdW, msg_to_client);   
-            } else {
-                Message msg_to_client(Commands::fail, msg_from_client._data, -1);
-                send(fdW, msg_to_client);   
-            }
-            for (auto iter: authorized_proccess) {
-                std::cout << iter.first << ' ' << iter.second << std::endl;
-            }
-        } else if (msg_from_client._cmd == Commands::stats) {
-            std::cout << msg_from_client._data << ' ' << msg_from_client._pid << std::endl;
-            if (is_authorized(msg_from_client._pid, std::string(msg_from_client._data))) {
-                auto [win, lose] = user_stats(msg_from_client._data);
-                Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
-                send(fdW, msg_to_client);
-            } else {
-                Message msg_to_client(Commands::fail, "not_autorized", -1);
-                send(fdW, msg_to_client);
-            }
-        }
-    }
-    close(fdR);
-    close(fdW);
-    return 0;
+    Server server;
+    server.exec();
 }

@@ -3,12 +3,15 @@
 #include <unistd.h>
 #include <string>
 #include <cstring>
+#include <vector>
+
 enum Commands {
     login = 0,
     create_user = 1,
     success = 3,
     fail = 4,
-    stats = 5
+    stats = 5,
+    connect = 6
 };
 
 struct Message {
