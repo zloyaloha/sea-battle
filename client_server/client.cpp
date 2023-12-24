@@ -8,7 +8,6 @@
 #include "message.h"
 #include <iostream>
 
-std::string myfifo_read_default = "/tmp/myfifo_s-c_def";
 std::string myfifo_write_default = "/tmp/myfifo_c-s_def";
 
 std::string myfifo_read = "/tmp/myfifo_s-c_" + std::to_string(getpid());
@@ -20,28 +19,28 @@ std::string username = "";
 bool default_connection() {
     mkfifo(myfifo_read.c_str(), 0666);
     mkfifo(myfifo_write.c_str(), 0666);
-    mkfifo(myfifo_read_default.c_str(), 0666);
     mkfifo(myfifo_write_default.c_str(), 0666);
     std::cout << "Trying connect to server" << std::endl;
-    int fd_read_default = open(myfifo_read_default.c_str(), O_RDONLY);
     int fd_write_default = open(myfifo_write_default.c_str(), O_WRONLY);
     std::string reply;
     Message msg_to_server(Commands::connect, "", getpid());
     Message reply_from_server(Commands::fail, reply, 0);
     send(fd_write_default, msg_to_server);
+
+    if (close(fd_write_default) == -1) {
+        throw std::logic_error("bad with close");
+    }
+
     fdR = open(myfifo_read.c_str(), O_RDONLY);
     fdW = open(myfifo_write.c_str(), O_WRONLY);
     recv(fdR, reply_from_server);
+
     if (reply_from_server._cmd == success) {
         std::cout << "Succesfully connected" << std::endl;
-        close(fd_read_default);
-        close(fd_write_default);
         return true;
     } else {
         close(fdR);
         close(fdW);
-        close(fd_read_default);
-        close(fd_write_default);
         std::cout << "Problem with connection" << std::endl;
         return false;
     }

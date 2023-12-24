@@ -12,7 +12,6 @@
 #include <chrono>
 #include <errno.h>
 
-std::string myfifo_write_default = "/tmp/myfifo_s-c_def";
 std::string myfifo_read_default = "/tmp/myfifo_c-s_def";
 
 std::pair<int, int> user_stats(const std::string& username) {
@@ -139,13 +138,13 @@ class Server {
         std::unordered_map<int, int> _pid_fdW;
         std::unordered_map<int, std::string> authorized_proccess;
         std::queue<Message> _msgs;
+        int fd_default_read;
         Server() {
+            std::cout << "Initialize default channel" << std::endl;
             mkfifo(myfifo_read_default.c_str(), 0666);
-            mkfifo(myfifo_write_default.c_str(), 0666);
-            int fd_default_write = open(myfifo_write_default.c_str(), O_WRONLY);
-            int fd_default_read = open(myfifo_read_default.c_str(), O_RDONLY | O_NONBLOCK);
+            fd_default_read = open(myfifo_read_default.c_str(), O_RDONLY | O_NONBLOCK);
             _fdR.push_back(fd_default_read);
-            _pid_fdW.insert({0, fd_default_write});
+            std::cout << "Default channel initialized" << std::endl;
         }
         ~Server() {
             for (auto fd: _fdR) {
@@ -154,19 +153,12 @@ class Server {
             for (auto pid: _pid_fdW) {
                 close(pid.second);
             }
+            
         }
         bool is_authorized(int processId) {
             auto elem = authorized_proccess.find(processId);
             return (elem != authorized_proccess.end());
         }
-        // void open_fifo() {
-        //     int fd_read;
-        //     int fd_write;
-        //     mkfifo(myfifo_read.c_str(), 0666);
-        //     mkfifo(myfifo_write.c_str(), 0666);
-        //     int fdW = open(myfifo_read.c_str(), O_WRONLY);
-        //     int fdR = open(myfifo_write.c_str(), O_RDONLY);
-        // }
         void try_recv() {
             auto start = std::chrono::system_clock::now();
             while(true) {
@@ -228,14 +220,23 @@ class Server {
                             send_to(msg_to_make._pid, msg_to_client);   
                         }
                     } else if (msg_to_make._cmd == Commands::connect) {
+                        if (close(fd_default_read) == -1) {
+                            throw std::logic_error("bad with close");
+                        }
+                        if (unlink(myfifo_read_default.c_str())) {
+                            throw std::logic_error("bad with unlink");
+                        }
+                        mkfifo(myfifo_read_default.c_str(), 0666);
+                        fd_default_read = open(myfifo_read_default.c_str(), O_RDONLY | O_NONBLOCK);
+
                         std::cout << "Making connection pipe for proc " << msg_to_make._pid << std::endl;
                         std::string name_fifo_read = "/tmp/myfifo_c-s_" + std::to_string(msg_to_make._pid);
                         std::string name_fifo_write = "/tmp/myfifo_s-c_" + std::to_string(msg_to_make._pid);
                         mkfifo(name_fifo_read.c_str(), 0666);
                         mkfifo(name_fifo_write.c_str(), 0666);
-
                         int fd_write= open(name_fifo_write.c_str(), O_WRONLY);
                         int fd_read = open(name_fifo_read.c_str(), O_RDONLY);
+
                         _fdR.push_back(fd_read);
                         _pid_fdW.insert({msg_to_make._pid, fd_write});
                         auto elem = _pid_fdW.find(msg_to_make._pid);
