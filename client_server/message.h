@@ -13,7 +13,10 @@ enum Commands {
     stats = 5,
     connect = 6,
     find,
-    place_ship
+    place_ship,
+    ready_to_play,
+    kill,
+    end_game
 };
 
 struct Message {
@@ -35,3 +38,4 @@ void send(int fd, Message &msg) {
 size_t recv(int fd, Message &msg) {
     return read(fd, &msg, sizeof(msg));
 }
+

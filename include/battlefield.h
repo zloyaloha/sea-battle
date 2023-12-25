@@ -2,6 +2,7 @@
 #include <array>
 #include <iostream>
 #include <unordered_map>
+#include <vector>
 
 #define BTF_SIZE 10
 #define SIZE_ERROR 2
@@ -10,7 +11,11 @@
 
 enum Direction {
     Horisontal = 0,
-    Vertical = 1
+    Vertical = 1,
+};
+
+enum DirectionOfShip {
+    left, right, up, down, left_right, up_down
 };
 
 enum ShipType {
@@ -28,9 +33,11 @@ class Battlefield {
         Battlefield();
         void print();
         int place_ship(char x, int y, Direction dir, ShipType type);
-        int try_kill(int x, int y);
+        bool try_kill(char x, int y);
         int four_amount() { return ships_amount.find(four_square)->second;}
         int three_amount() { return ships_amount.find(three_square)->second;}
         int two_amount() { return ships_amount.find(two_square)->second;}
         int one_amount() { return ships_amount.find(one_square)->second;}
+        bool end_game_check();
+        void set(char column, int x, char mark);
 };

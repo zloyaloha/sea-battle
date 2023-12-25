@@ -17,7 +17,7 @@
 int active_game_counter = 1;
 std::string myfifo_read_default = "/tmp/myfifo_c-s_def";
 
-void tokenize(std::string input, int &direction, char &column, int &row, int &type) {
+void tokenize(std::string input, int &direction, std::string &column, int &row, int &type) {
     std::vector<std::string> res;
     std::istringstream is(input);
     std::string part;
@@ -25,13 +25,51 @@ void tokenize(std::string input, int &direction, char &column, int &row, int &ty
     while (is >> part) {
         res.push_back(part);
     }
-    for (auto it: res) {
-        std::cout << it << std::endl;
+    if (res.size() == 2) {
+        direction = 0;
+        column = res[0];
+        row = std::stoi(res[1]);
+        type = 0;
+    } else {
+        direction = std::stoi(res[0]);
+        column = res[1];
+        row = std::stoi(res[2]);
+        type = std::stoi(res[3]);
     }
-    direction = std::stoi(res[0]);
-    column = res[1].c_str()[0];
-    row = std::stoi(res[2]);
-    type = std::stoi(res[3]);
+}
+
+void updateResult(const std::string& username, bool isWin) {
+    sqlite3 *db;
+    if (sqlite3_open("../db/users.db", &db) != SQLITE_OK) {
+        std::cerr << "Ошибка при открытии базы данных: " << sqlite3_errmsg(db) << std::endl;
+        return;
+    }
+    
+    const char *sql = isWin ? "UPDATE users SET win = win + 1 WHERE username = ?;"
+                            : "UPDATE users SET lose = lose + 1 WHERE username = ?;";
+
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Ошибка при подготовке SQL-запроса: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_close(db);
+        return;
+    }
+
+    if (sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC) != SQLITE_OK) {
+        std::cerr << "Ошибка при привязке параметра к запросу: " << sqlite3_errmsg(db) << std::endl;
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return;
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        std::cerr << "Ошибка при выполнении SQL-запроса: " << sqlite3_errmsg(db) << std::endl;
+    }
+
+    sqlite3_finalize(stmt);
+
+    sqlite3_close(db);
 }
 
 std::pair<int, int> user_stats(const std::string& username) {
@@ -156,25 +194,13 @@ struct Game {
     int pid1, pid2;
     std::string username1;
     std::string username2;
-    std::unordered_map<ShipType, std::vector<std::tuple<bool, char, int, int>>> placement_ships_on_first_btf;
-    std::unordered_map<ShipType, std::vector<std::tuple<bool, char, int, int>>> placement_ships_on_second_btf;
+    Battlefield *btf1, *btf2;
     Game() = default;
     Game(const int &pid1_tmp, const int &pid2_tmp, const std::string &username1_tmp, const std::string &username2_tmp) {
         pid1 = pid1_tmp; pid2 = pid2_tmp;
         username1 = username1_tmp;
         username2 = username2_tmp;
-        placement_ships_on_first_btf = {
-            {four_square, {}},
-            {three_square, {}},
-            {two_square, {}},
-            {one_square, {}}
-        };
-        placement_ships_on_second_btf = {
-            {four_square, {}},
-            {three_square, {}},
-            {two_square, {}},
-            {one_square, {}}
-        };
+        btf1 = new Battlefield(); btf2 = new Battlefield();
     }
 };
 
@@ -249,7 +275,7 @@ class Server {
         void try_recv() {
             auto start = std::chrono::system_clock::now();
             while(true) {
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count() > 100) {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count() > 500) {
                     break;
                 }
                 for (auto fd: _fdR) {
@@ -331,42 +357,115 @@ class Server {
                             if (search_by_username(std::string(msg_to_make._data))->second.game_status == 1) {
                                 Message msg_to_client1(Commands::success, "Succesfully connected1", -1);
                                 Message msg_to_client2(Commands::success, "Succesfully connected2", -1);
-                                auto user1 = _users[msg_to_make._pid];
-                                auto user2 = search_by_username(std::string(msg_to_make._data))->second;
-                                _users[msg_to_make._pid].game_status += 2;
-                                search_by_username(std::string(msg_to_make._data))->second.game_status += 1;
-                                _users[msg_to_make._pid].game_index = active_game_counter;
-                                search_by_username(std::string(msg_to_make._data))->second.game_index = active_game_counter;
-                                Game game(_users[msg_to_make._pid].pid, search_by_username(std::string(msg_to_make._data))->second.pid, _users[msg_to_make._pid].username, search_by_username(std::string(msg_to_make._data))->second.username);
+                                auto *user1 = &_users[msg_to_make._pid];
+                                auto *user2 = &search_by_username(std::string(msg_to_make._data))->second;
+                                user1->game_status = 2;
+                                user2->game_status = 2;
+                                user1->game_index = active_game_counter;
+                                user2->game_index = active_game_counter;
+                                Game game(user1->pid, user2->pid, user1->username, user2->username);
                                 _active_games.insert({active_game_counter, game});
                                 active_game_counter++;
-                                send_to(msg_to_make._pid, msg_to_client1);
-                                send_to(user2.pid, msg_to_client2);
+                                send_to(user2->pid, msg_to_client2);
+                                sleep(1);
+                                send_to(user1->pid, msg_to_client1);
                             } else {
-                                _users[msg_to_make._pid].game_status += 1;
+                                _users[msg_to_make._pid].game_status = 1;
                             }
                         } else {
                             Message msg_to_client(Commands::fail, "Opponent not online", -1);
                             send_to(msg_to_make._pid, msg_to_client);
                         }
                     } else if (msg_to_make._cmd == Commands::place_ship) {
-                        char column; int row; int type; int direction;
+                        std::cout << msg_to_make._data << std::endl;
+                        std::string column; int row; int type; int direction;
                         tokenize(std::string(msg_to_make._data), direction, column, row, type);
-                        auto deduction_proccess = _active_games[_users[msg_to_make._pid].game_index];
-                        std::cout << _users[msg_to_make._pid].game_index << ' ' << deduction_proccess.pid1 << ' ' << deduction_proccess.pid2 << ' ' << msg_to_make._pid << std::endl;
-                        if (deduction_proccess.pid1 == msg_to_make._pid) {
-                            deduction_proccess.placement_ships_on_first_btf[ShipType(type)].push_back(std::make_tuple(direction, column, row, type));
-                        } else if (deduction_proccess.pid2 == msg_to_make._pid) {
-                            deduction_proccess.placement_ships_on_second_btf[ShipType(type)].push_back(std::make_tuple(direction, column, row, type));
+                        auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
+                        if (deduction_proccess->pid1 == msg_to_make._pid) {
+                            std::cout << "Place on first" << std::endl;
+                            deduction_proccess->btf1->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
+                            Message msg_to_client1(Commands::success, "Succesfully placed", -1);
+                            send_to(msg_to_make._pid, msg_to_client1);
+                        } else if (deduction_proccess->pid2 == msg_to_make._pid) {
+                            std::cout << "Place on second" << std::endl;
+                            deduction_proccess->btf2->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
+                            Message msg_to_client1(Commands::success, "Succesfully placed", -1);
+                            send_to(msg_to_make._pid, msg_to_client1);
                         } else {
                             std::cout << "what the fuck" << std::endl;
                         }
-                        // for (auto ships: deduction_proccess.placement_ships_on_first_btf) {
-                        //     for (auto tuple: ships) {
-                        //         std::cout << std::get<0>(ships) << ' '<< std::get<1>(ships) << ' '<< std::get<2>(ships) << ' '<< std::get<3>(ships) << std::endl;
-                        //     }
-                        // }
+                        deduction_proccess->btf1->print();
+                        deduction_proccess->btf2->print();
                         
+                    } else if (msg_to_make._cmd == Commands::ready_to_play) {
+                        auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
+                        Message msg_to_client1(Commands::success, "Ready to play", 1);
+                        Message msg_to_client2(Commands::success, "Ready to play", 2);
+                        if (deduction_proccess->pid1 == msg_to_make._pid && _users[deduction_proccess->pid2].game_status == 3) {
+                            send_to(deduction_proccess->pid1, msg_to_client1);
+                            send_to(deduction_proccess->pid2, msg_to_client2);
+                        }
+                        if (deduction_proccess->pid2 == msg_to_make._pid && _users[deduction_proccess->pid1].game_status == 3) {
+                            send_to(deduction_proccess->pid1, msg_to_client1);
+                            send_to(deduction_proccess->pid2, msg_to_client2);
+                        }
+                        _users[msg_to_make._pid].game_status = 3;
+                    } else if (msg_to_make._cmd == Commands::kill) {
+                        auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
+                        std::string column; int row; int type; int direction;
+                        tokenize(std::string(msg_to_make._data), direction, column, row, type);
+                        std::cout << "ok1" << std::endl;
+                        bool success;
+                        if (deduction_proccess->pid1 == msg_to_make._pid) {
+                            success = deduction_proccess->btf2->try_kill(column.c_str()[0], row);
+                            if (success) {
+                                if (deduction_proccess->btf2->end_game_check()) {
+                                    Message msg_to_client1(Commands::end_game, "You win", 1);
+                                    Message msg_to_client2(Commands::end_game, "You lose", 2);
+                                    updateResult(deduction_proccess->username1, 1);
+                                    updateResult(deduction_proccess->username2, 0);
+                                    send_to(deduction_proccess->pid1, msg_to_client1);
+                                    send_to(deduction_proccess->pid2, msg_to_client2);
+                                } else {
+                                    Message msg_to_client1(Commands::success, "Catch", 1);
+                                    Message msg_to_client2(Commands::success, column, row);
+                                    send_to(deduction_proccess->pid1, msg_to_client1);
+                                    send_to(deduction_proccess->pid2, msg_to_client2);
+                                }
+                            } else {
+                                Message msg_to_client1(Commands::fail, "Failed attempt", 1);
+                                Message msg_to_client2(Commands::fail, "Opponent missed", 2);
+                                send_to(deduction_proccess->pid1, msg_to_client1);
+                                send_to(deduction_proccess->pid2, msg_to_client2);
+                            }
+                        } else if (deduction_proccess->pid2 == msg_to_make._pid) {
+                            std::cout << "ok2" << std::endl;
+                            success = deduction_proccess->btf1->try_kill(column.c_str()[0], row);
+                            if (success) {
+                                if (deduction_proccess->btf1->end_game_check()) {
+                                    Message msg_to_client1(Commands::end_game, "You lose", 1);
+                                    Message msg_to_client2(Commands::end_game, "You win", 2);
+                                    send_to(deduction_proccess->pid1, msg_to_client1);
+                                    send_to(deduction_proccess->pid2, msg_to_client2);
+                                    updateResult(deduction_proccess->username2, 1);
+                                    updateResult(deduction_proccess->username1, 0);
+                                } else {
+                                    Message msg_to_client2(Commands::success, "Catch", 1);
+                                    Message msg_to_client1(Commands::success, column, row);
+                                    send_to(deduction_proccess->pid1, msg_to_client1);
+                                    send_to(deduction_proccess->pid2, msg_to_client2);
+                                }
+                            } else {
+                                Message msg_to_client2(Commands::fail, "Failed attempt", 1);
+                                Message msg_to_client1(Commands::fail, "Opponent missed", 2);
+                                send_to(deduction_proccess->pid1, msg_to_client1);
+                                send_to(deduction_proccess->pid2, msg_to_client2);
+                            }
+                        } else {
+                            std::cout << "what the fuck" << std::endl;
+                        }
+                        deduction_proccess->btf1->print();
+                        deduction_proccess->btf2->print();
                     }
                 }
             }
