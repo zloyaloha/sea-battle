@@ -11,7 +11,9 @@ enum Commands {
     success = 3,
     fail = 4,
     stats = 5,
-    connect = 6
+    connect = 6,
+    find,
+    place_ship
 };
 
 struct Message {

@@ -11,8 +11,28 @@
 #include <vector>
 #include <chrono>
 #include <errno.h>
+#include <battlefield.h>
+#include <sstream>
 
+int active_game_counter = 1;
 std::string myfifo_read_default = "/tmp/myfifo_c-s_def";
+
+void tokenize(std::string input, int &direction, char &column, int &row, int &type) {
+    std::vector<std::string> res;
+    std::istringstream is(input);
+    std::string part;
+
+    while (is >> part) {
+        res.push_back(part);
+    }
+    for (auto it: res) {
+        std::cout << it << std::endl;
+    }
+    direction = std::stoi(res[0]);
+    column = res[1].c_str()[0];
+    row = std::stoi(res[2]);
+    type = std::stoi(res[3]);
+}
 
 std::pair<int, int> user_stats(const std::string& username) {
     sqlite3* db;
@@ -132,12 +152,54 @@ bool add_user(const std::string &username) {
     return (status == 1);
 }
 
+struct Game {
+    int pid1, pid2;
+    std::string username1;
+    std::string username2;
+    std::unordered_map<ShipType, std::vector<std::tuple<bool, char, int, int>>> placement_ships_on_first_btf;
+    std::unordered_map<ShipType, std::vector<std::tuple<bool, char, int, int>>> placement_ships_on_second_btf;
+    Game() = default;
+    Game(const int &pid1_tmp, const int &pid2_tmp, const std::string &username1_tmp, const std::string &username2_tmp) {
+        pid1 = pid1_tmp; pid2 = pid2_tmp;
+        username1 = username1_tmp;
+        username2 = username2_tmp;
+        placement_ships_on_first_btf = {
+            {four_square, {}},
+            {three_square, {}},
+            {two_square, {}},
+            {one_square, {}}
+        };
+        placement_ships_on_second_btf = {
+            {four_square, {}},
+            {three_square, {}},
+            {two_square, {}},
+            {one_square, {}}
+        };
+    }
+};
+
+struct User {
+    std::string username;
+    int pid;
+    int fdW;
+    int game_index;
+    int game_status;
+    User() = default;
+    User(const std::string username_tmp, const int &pid_tmp, const int &fd_tmp, const int &game_index_tmp, const int &game_status_tmp) {
+        username = username_tmp;
+        pid = pid_tmp;
+        fdW = fd_tmp;
+        game_index = game_index_tmp;
+        game_status = game_status_tmp;
+    }
+};
+
 class Server {
     public:
         std::vector<int> _fdR;
-        std::unordered_map<int, int> _pid_fdW;
-        std::unordered_map<int, std::string> authorized_proccess;
+        std::unordered_map<int, User> _users;
         std::queue<Message> _msgs;
+        std::unordered_map<int, Game> _active_games;
         int fd_default_read;
         Server() {
             std::cout << "Initialize default channel" << std::endl;
@@ -150,14 +212,39 @@ class Server {
             for (auto fd: _fdR) {
                 close(fd);
             }
-            for (auto pid: _pid_fdW) {
-                close(pid.second);
+            for (auto pid: _users) {
+                close(pid.second.fdW);
             }
             
         }
-        bool is_authorized(int processId) {
-            auto elem = authorized_proccess.find(processId);
-            return (elem != authorized_proccess.end());
+        // User* search_by_pid(const int &pid) {
+        //     for (auto user: _users) {
+        //         if (user.pid == pid) {
+        //             return &user;
+        //         }
+        //     }
+        //     return nullptr;
+        // }
+        auto search_by_username(const std::string &username) {
+            for (auto iter = _users.begin(); iter != _users.end(); iter++) {
+                if (iter->second.username == username) {
+                    return iter;
+                }
+            }
+            return _users.end();
+        }
+        bool is_authorized_by_username(const std::string &username) {
+            bool flag = false;
+            for (auto user: _users) {
+                if (user.second.username == username) {
+                    flag = true;
+                }
+            }
+            return flag;
+        }
+        bool is_authorized_by_pid(const int &pid) {
+            auto search = _users.find(pid);
+            return search != _users.end();
         }
         void try_recv() {
             auto start = std::chrono::system_clock::now();
@@ -168,7 +255,6 @@ class Server {
                 for (auto fd: _fdR) {
                     Message msg_from_client;
                     int num_of_bytes = recv(fd, msg_from_client);
-                    // std::cout << "huynul v o4ered" << std::endl;
                     if (num_of_bytes > 0) {
                         _msgs.push(msg_from_client);
                     }
@@ -176,10 +262,7 @@ class Server {
             }
         }
         void send_to(int pid, Message &msg) {
-            auto elem = _pid_fdW.find(pid);
-            if (elem != _pid_fdW.end()) {
-                send((*elem).second, msg);
-            }
+            send(_users[pid].fdW, msg);
         }
         void exec() {
             while (1) {
@@ -198,20 +281,27 @@ class Server {
                             send_to(msg_to_make._pid, msg_to_client);      
                         }
                     } else if (msg_to_make._cmd == Commands::login) {
+                        bool not_available_login = is_authorized_by_username(msg_to_make._data); // тут нужен поиск по username 
+                        if (not_available_login) {
+                            Message msg_to_client(Commands::fail, "This username is already logged", -1);
+                            send_to(msg_to_make._pid, msg_to_client);
+                            continue;
+                        }
                         bool success = autorize(msg_to_make._data);
                         if (success) {
-                            authorized_proccess.insert({msg_to_make._pid, std::string(msg_to_make._data)});
+                            _users[msg_to_make._pid].username = std::string(msg_to_make._data);
                             Message msg_to_client(Commands::success, msg_to_make._data, -1);
                             send_to(msg_to_make._pid, msg_to_client);      
                         } else {
-                            Message msg_to_client(Commands::fail, msg_to_make._data, -1);
+                            Message msg_to_client(Commands::fail, "Fatal error", -1);
                             send_to(msg_to_make._pid, msg_to_client);      
                         }
-                        for (auto iter: authorized_proccess) {
-                            std::cout << iter.first << ' ' << iter.second << std::endl;
+                        std::cout << "Login:\n";
+                        for (auto iter: _users) {
+                            std::cout << iter.second.username << ' ' << iter.second.pid << std::endl;
                         }
                     } else if (msg_to_make._cmd == Commands::stats) {
-                        if (is_authorized(msg_to_make._pid)) {
+                        if (is_authorized_by_pid(msg_to_make._pid)) { // проверка на авторизированность процесса
                             auto [win, lose] = user_stats(msg_to_make._data);
                             Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
                             send_to(msg_to_make._pid, msg_to_client);   
@@ -220,30 +310,63 @@ class Server {
                             send_to(msg_to_make._pid, msg_to_client);   
                         }
                     } else if (msg_to_make._cmd == Commands::connect) {
-                        if (close(fd_default_read) == -1) {
-                            throw std::logic_error("bad with close");
-                        }
-                        if (unlink(myfifo_read_default.c_str())) {
-                            throw std::logic_error("bad with unlink");
-                        }
-                        mkfifo(myfifo_read_default.c_str(), 0666);
-                        fd_default_read = open(myfifo_read_default.c_str(), O_RDONLY | O_NONBLOCK);
-
                         std::cout << "Making connection pipe for proc " << msg_to_make._pid << std::endl;
                         std::string name_fifo_read = "/tmp/myfifo_c-s_" + std::to_string(msg_to_make._pid);
                         std::string name_fifo_write = "/tmp/myfifo_s-c_" + std::to_string(msg_to_make._pid);
                         mkfifo(name_fifo_read.c_str(), 0666);
                         mkfifo(name_fifo_write.c_str(), 0666);
-                        int fd_write= open(name_fifo_write.c_str(), O_WRONLY);
-                        int fd_read = open(name_fifo_read.c_str(), O_RDONLY);
-
+                        int fd_write = open(name_fifo_write.c_str(), O_WRONLY);
+                        int fd_read = open(name_fifo_read.c_str(), O_RDONLY | O_NONBLOCK);
                         _fdR.push_back(fd_read);
-                        _pid_fdW.insert({msg_to_make._pid, fd_write});
-                        auto elem = _pid_fdW.find(msg_to_make._pid);
+                        User tmp_user{"", msg_to_make._pid, fd_write, 0, 0};
+                        _users.insert({msg_to_make._pid, tmp_user});
+                        auto elem = _users.find(msg_to_make._pid);
                         Message msg_to_client(Commands::success, "Succesfully connected", -1);
-                        if (elem != _pid_fdW.end()) {
-                            send((*elem).second, msg_to_client);
+                        if (elem != _users.end()) {
+                            send_to(elem->second.pid, msg_to_client);
                         }
+                    } else if (msg_to_make._cmd == Commands::find) {
+                        std::cout << "Find opponent for " << _users[msg_to_make._pid].username << std::endl;
+                        if (is_authorized_by_username(msg_to_make._data)) {
+                            if (search_by_username(std::string(msg_to_make._data))->second.game_status == 1) {
+                                Message msg_to_client1(Commands::success, "Succesfully connected1", -1);
+                                Message msg_to_client2(Commands::success, "Succesfully connected2", -1);
+                                auto user1 = _users[msg_to_make._pid];
+                                auto user2 = search_by_username(std::string(msg_to_make._data))->second;
+                                _users[msg_to_make._pid].game_status += 2;
+                                search_by_username(std::string(msg_to_make._data))->second.game_status += 1;
+                                _users[msg_to_make._pid].game_index = active_game_counter;
+                                search_by_username(std::string(msg_to_make._data))->second.game_index = active_game_counter;
+                                Game game(_users[msg_to_make._pid].pid, search_by_username(std::string(msg_to_make._data))->second.pid, _users[msg_to_make._pid].username, search_by_username(std::string(msg_to_make._data))->second.username);
+                                _active_games.insert({active_game_counter, game});
+                                active_game_counter++;
+                                send_to(msg_to_make._pid, msg_to_client1);
+                                send_to(user2.pid, msg_to_client2);
+                            } else {
+                                _users[msg_to_make._pid].game_status += 1;
+                            }
+                        } else {
+                            Message msg_to_client(Commands::fail, "Opponent not online", -1);
+                            send_to(msg_to_make._pid, msg_to_client);
+                        }
+                    } else if (msg_to_make._cmd == Commands::place_ship) {
+                        char column; int row; int type; int direction;
+                        tokenize(std::string(msg_to_make._data), direction, column, row, type);
+                        auto deduction_proccess = _active_games[_users[msg_to_make._pid].game_index];
+                        std::cout << _users[msg_to_make._pid].game_index << ' ' << deduction_proccess.pid1 << ' ' << deduction_proccess.pid2 << ' ' << msg_to_make._pid << std::endl;
+                        if (deduction_proccess.pid1 == msg_to_make._pid) {
+                            deduction_proccess.placement_ships_on_first_btf[ShipType(type)].push_back(std::make_tuple(direction, column, row, type));
+                        } else if (deduction_proccess.pid2 == msg_to_make._pid) {
+                            deduction_proccess.placement_ships_on_second_btf[ShipType(type)].push_back(std::make_tuple(direction, column, row, type));
+                        } else {
+                            std::cout << "what the fuck" << std::endl;
+                        }
+                        // for (auto ships: deduction_proccess.placement_ships_on_first_btf) {
+                        //     for (auto tuple: ships) {
+                        //         std::cout << std::get<0>(ships) << ' '<< std::get<1>(ships) << ' '<< std::get<2>(ships) << ' '<< std::get<3>(ships) << std::endl;
+                        //     }
+                        // }
+                        
                     }
                 }
             }
