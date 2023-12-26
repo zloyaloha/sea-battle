@@ -18,8 +18,6 @@ file(GLOB_RECURSE SOURCES LIST_DIRECTORIES false ${SOURCE_DIR}/*.cpp)
 add_library(sea_battle_lib ${SOURCES})
 add_executable(client.exe ${SERVER_CLIENT_DIR}/client.cpp)
 add_executable(server.exe ${SERVER_CLIENT_DIR}/server.cpp)
-add_executable(test.exe main.cpp)
 
 target_link_libraries(server.exe PRIVATE ${CMAKE_PROJECT_NAME}_lib ${SQLite3_LIBRARIES})
 target_link_libraries(client.exe PRIVATE ${CMAKE_PROJECT_NAME}_lib ${SQLite3_LIBRARIES})
-target_link_libraries(test.exe PRIVATE ${CMAKE_PROJECT_NAME}_lib ${SQLite3_LIBRARIES})

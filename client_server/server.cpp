@@ -13,7 +13,10 @@
 #include <errno.h>
 #include <battlefield.h>
 #include <sstream>
+#include <sys/types.h>
 
+
+#include <signal.h>
 int active_game_counter = 1;
 std::string myfifo_read_default = "/tmp/myfifo_c-s_def";
 
@@ -208,13 +211,14 @@ struct User {
     std::string username;
     int pid;
     int fdW;
+    int fdR;
     int game_index;
     int game_status;
     User() = default;
-    User(const std::string username_tmp, const int &pid_tmp, const int &fd_tmp, const int &game_index_tmp, const int &game_status_tmp) {
+    User(const std::string username_tmp, const int &pid_tmp, const int &fdW_tmp, const int &game_index_tmp, const int &game_status_tmp, const int &fdR_tmp) {
         username = username_tmp;
         pid = pid_tmp;
-        fdW = fd_tmp;
+        fdW = fdW_tmp; fdR = fdR_tmp;
         game_index = game_index_tmp;
         game_status = game_status_tmp;
     }
@@ -243,14 +247,6 @@ class Server {
             }
             
         }
-        // User* search_by_pid(const int &pid) {
-        //     for (auto user: _users) {
-        //         if (user.pid == pid) {
-        //             return &user;
-        //         }
-        //     }
-        //     return nullptr;
-        // }
         auto search_by_username(const std::string &username) {
             for (auto iter = _users.begin(); iter != _users.end(); iter++) {
                 if (iter->second.username == username) {
@@ -274,8 +270,14 @@ class Server {
         }
         void try_recv() {
             auto start = std::chrono::system_clock::now();
+            for (auto user: _users) {
+                if (kill(user.second.pid, 0) != 0) {
+                    Message msg_from_client(clear, "", user.second.pid);
+                    _msgs.push(msg_from_client);
+                }
+            }
             while(true) {
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count() > 500) {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count() > 100) {
                     break;
                 }
                 for (auto fd: _fdR) {
@@ -295,7 +297,7 @@ class Server {
                 this->try_recv();
                 while (!_msgs.empty()) {
                     Message msg_to_make;
-                    msg_to_make = _msgs.back();
+                    msg_to_make = _msgs.front();
                     _msgs.pop();
                     if (msg_to_make._cmd == create_user) {
                         bool success = add_user(msg_to_make._data);
@@ -306,8 +308,27 @@ class Server {
                             Message msg_to_client(Commands::fail, msg_to_make._data, -1);
                             send_to(msg_to_make._pid, msg_to_client);      
                         }
+                    } else if (msg_to_make._cmd == Commands::clear) {
+                        std::cout << "proccess with pid = " << msg_to_make._pid << " disconnect" << std::endl;
+                        auto game_of_disconnected = _active_games.find(_users[msg_to_make._pid].game_index);
+                        if (game_of_disconnected != _active_games.end()) {
+                            if (game_of_disconnected->second.pid1 == msg_to_make._pid) {
+                                _users[game_of_disconnected->second.pid2].game_status = 0;
+                                Message msg_to_client(Commands::disconnect, "", -1);
+                                send_to(game_of_disconnected->second.pid2, msg_to_client);
+                            } else if (game_of_disconnected->second.pid2 == msg_to_make._pid) {
+                                _users[game_of_disconnected->second.pid1].game_status = 0;
+                                Message msg_to_client(Commands::disconnect, "", -1);
+                                send_to(game_of_disconnected->second.pid1, msg_to_client);
+                            }
+                            _active_games.erase(_users[msg_to_make._pid].game_index);
+                        }
+                        close(_users[msg_to_make._pid].fdW);
+                        close(_users[msg_to_make._pid].fdR);
+                        _fdR.erase(std::find(_fdR.begin(), _fdR.end(), _users[msg_to_make._pid].fdR));
+                        _users.erase(_users.find(msg_to_make._pid));
                     } else if (msg_to_make._cmd == Commands::login) {
-                        bool not_available_login = is_authorized_by_username(msg_to_make._data); // тут нужен поиск по username 
+                        bool not_available_login = is_authorized_by_username(msg_to_make._data); 
                         if (not_available_login) {
                             Message msg_to_client(Commands::fail, "This username is already logged", -1);
                             send_to(msg_to_make._pid, msg_to_client);
@@ -327,7 +348,7 @@ class Server {
                             std::cout << iter.second.username << ' ' << iter.second.pid << std::endl;
                         }
                     } else if (msg_to_make._cmd == Commands::stats) {
-                        if (is_authorized_by_pid(msg_to_make._pid)) { // проверка на авторизированность процесса
+                        if (is_authorized_by_pid(msg_to_make._pid)) { 
                             auto [win, lose] = user_stats(msg_to_make._data);
                             Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
                             send_to(msg_to_make._pid, msg_to_client);   
@@ -344,7 +365,7 @@ class Server {
                         int fd_write = open(name_fifo_write.c_str(), O_WRONLY);
                         int fd_read = open(name_fifo_read.c_str(), O_RDONLY | O_NONBLOCK);
                         _fdR.push_back(fd_read);
-                        User tmp_user{"", msg_to_make._pid, fd_write, 0, 0};
+                        User tmp_user{"", msg_to_make._pid, fd_write, 0, 0, fd_read};
                         _users.insert({msg_to_make._pid, tmp_user});
                         auto elem = _users.find(msg_to_make._pid);
                         Message msg_to_client(Commands::success, "Succesfully connected", -1);
@@ -367,7 +388,6 @@ class Server {
                                 _active_games.insert({active_game_counter, game});
                                 active_game_counter++;
                                 send_to(user2->pid, msg_to_client2);
-                                sleep(1);
                                 send_to(user1->pid, msg_to_client1);
                             } else {
                                 _users[msg_to_make._pid].game_status = 1;
@@ -392,7 +412,8 @@ class Server {
                             Message msg_to_client1(Commands::success, "Succesfully placed", -1);
                             send_to(msg_to_make._pid, msg_to_client1);
                         } else {
-                            std::cout << "what the fuck" << std::endl;
+                            std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
+                            continue;
                         }
                         deduction_proccess->btf1->print();
                         deduction_proccess->btf2->print();
@@ -410,11 +431,10 @@ class Server {
                             send_to(deduction_proccess->pid2, msg_to_client2);
                         }
                         _users[msg_to_make._pid].game_status = 3;
-                    } else if (msg_to_make._cmd == Commands::kill) {
+                    } else if (msg_to_make._cmd == Commands::kill_ship) {
                         auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
                         std::string column; int row; int type; int direction;
                         tokenize(std::string(msg_to_make._data), direction, column, row, type);
-                        std::cout << "ok1" << std::endl;
                         bool success;
                         if (deduction_proccess->pid1 == msg_to_make._pid) {
                             success = deduction_proccess->btf2->try_kill(column.c_str()[0], row);
@@ -424,6 +444,11 @@ class Server {
                                     Message msg_to_client2(Commands::end_game, "You lose", 2);
                                     updateResult(deduction_proccess->username1, 1);
                                     updateResult(deduction_proccess->username2, 0);
+                                    _active_games.erase(_active_games.find(_users[msg_to_make._pid].game_index));
+                                    _users[deduction_proccess->pid2].game_status = 0;
+                                    _users[deduction_proccess->pid1].game_status = 0;
+                                    _users[deduction_proccess->pid2].game_index = 0;
+                                    _users[deduction_proccess->pid1].game_index = 0;
                                     send_to(deduction_proccess->pid1, msg_to_client1);
                                     send_to(deduction_proccess->pid2, msg_to_client2);
                                 } else {
@@ -439,16 +464,20 @@ class Server {
                                 send_to(deduction_proccess->pid2, msg_to_client2);
                             }
                         } else if (deduction_proccess->pid2 == msg_to_make._pid) {
-                            std::cout << "ok2" << std::endl;
                             success = deduction_proccess->btf1->try_kill(column.c_str()[0], row);
                             if (success) {
                                 if (deduction_proccess->btf1->end_game_check()) {
                                     Message msg_to_client1(Commands::end_game, "You lose", 1);
                                     Message msg_to_client2(Commands::end_game, "You win", 2);
-                                    send_to(deduction_proccess->pid1, msg_to_client1);
-                                    send_to(deduction_proccess->pid2, msg_to_client2);
+                                    _active_games.erase(_active_games.find(_users[msg_to_make._pid].game_index));
+                                    _users[deduction_proccess->pid2].game_status = 0;
+                                    _users[deduction_proccess->pid1].game_status = 0;
+                                    _users[deduction_proccess->pid2].game_index = 0;
+                                    _users[deduction_proccess->pid1].game_index = 0;
                                     updateResult(deduction_proccess->username2, 1);
                                     updateResult(deduction_proccess->username1, 0);
+                                    send_to(deduction_proccess->pid1, msg_to_client1);
+                                    send_to(deduction_proccess->pid2, msg_to_client2);
                                 } else {
                                     Message msg_to_client2(Commands::success, "Catch", 1);
                                     Message msg_to_client1(Commands::success, column, row);
@@ -462,7 +491,7 @@ class Server {
                                 send_to(deduction_proccess->pid2, msg_to_client2);
                             }
                         } else {
-                            std::cout << "what the fuck" << std::endl;
+                            std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
                         }
                         deduction_proccess->btf1->print();
                         deduction_proccess->btf2->print();

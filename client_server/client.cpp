@@ -9,6 +9,57 @@
 #include <iostream>
 #include "battlefield.h"
 
+void text_art() {
+    std::cout << '\n' << '\n';
+    std::cout << "\t\t                      #######################\n";
+    std::cout << "\t\t                   #####                  ######\n";
+    std::cout << "\t\t                ####                           ###\n";
+    std::cout << "\t\t               ###                               ###\n";
+    std::cout << "\t\t              ##                                   ##\n";
+    std::cout << "\t\t             ##                                     ##\n";
+    std::cout << "\t\t            ##                                       ##\n";
+    std::cout << "\t\t           ##                                        ##\n";
+    std::cout << "\t\t           ##  ##                                 ##  ##\n";
+    std::cout << "\t\t           ##  ##                                 ##  ##\n";
+    std::cout << "\t\t           ##  ##                                 ##  ##\n";
+    std::cout << "\t\t           ##  ##                                ##   ##\n";
+    std::cout << "\t\t            ##  ##                               ##  ##\n";
+    std::cout << "\t\t            ##  ##        ###         ###        ##  ##\n";
+    std::cout << "\t\t             ## ##  ##########       ##########  ## ## \n";
+    std::cout << "\t\t              #### ############     ############ ####\n";
+    std::cout << "\t\t               ###  ##########       ##########  ##\n";
+    std::cout << "\t\t    ####        #   #########         #########   #        ####\n";
+    std::cout << "\t\t   ##  ##      ##    ######     # #    #######    ##     ###  ##\n";
+    std::cout << "\t\t   ##   ##     ##              ## ##              ##    ###   ##\n";
+    std::cout << "\t\t  ##     ####   ##            ### ###            ##  #####     ##\n";
+    std::cout << "\t\t##          ########         #### ###          ########         ###\n";
+    std::cout << "\t\t##   ###        ########     #### ###      ########       ####  ###\n";
+    std::cout << "\t\t ###########       #######    ##   ##    ######        ###########\n";
+    std::cout << "\t\t           #####    ##   ##             ## # ##    #####\n";
+    std::cout << "\t\t              #####  # # ###           ### ###  #####\n";
+    std::cout << "\t\t                  ####  #  # # # # # # #  # #####\n";
+    std::cout << "\t\t                    ##  ## # # # # # # ####  #\n";
+    std::cout << "\t\t                  ####   # # # # # # # ###  ######\n";
+    std::cout << "\t\t              #####  ##    ##### # #####    ##  #####\n";
+    std::cout << "\t\t     ##########      ###                   ##       ##########\n";
+    std::cout << "\t\t    ##             ######                #######             ##\n";
+    std::cout << "\t\t     ##         ####    #####         #####    ####         ##\n";
+    std::cout << "\t\t      ###    ####          #############          ####    ###\n";
+    std::cout << "\t\t       ##   ##                                       ##   ##\n";
+    std::cout << "\t\t       ##  ##                                         ##  ##\n";
+    std::cout << "\t\t        ####                                           ####\n" << std::endl << '\n' << '\n';
+
+    std::cout << "  /$$$$$$  /$$$$$$$$  /$$$$$$          /$$$$$$$   /$$$$$$  /$$$$$$$$/$$$$$$$$/$$       /$$$$$$$$\n";
+    std::cout << " /$$__  $$| $$_____/ /$$__  $$        | $$__  $$ /$$__  $$|__  $$__/__  $$__/ $$      | $$_____/\n";
+    std::cout << "| $$  \\__/| $$      | $$  \\ $$        | $$  \\ $$| $$  \\ $$   | $$     | $$  | $$      | $$\n";
+    std::cout << "|  $$$$$$ | $$$$$   | $$$$$$$$ /$$$$$$| $$$$$$$ | $$$$$$$$   | $$     | $$  | $$      | $$$$$\n";
+    std::cout << " \\____  $$| $$__/   | $$__  $$|______/| $$__  $$| $$__  $$   | $$     | $$  | $$      | $$__/\n";
+    std::cout << " /$$  \\ $$| $$      | $$  | $$        | $$  \\ $$| $$  | $$   | $$     | $$  | $$      | $$\n";
+    std::cout << "|  $$$$$$/| $$$$$$$$| $$  | $$        | $$$$$$$/| $$  | $$   | $$     | $$  | $$$$$$$$| $$$$$$$$\n";
+    std::cout << " \\______/ |________/|__/  |__/        |_______/ |__/  |__/   |__/     |__/  |________/|________/\n" << std::endl << '\n' << '\n';
+
+}
+
 std::string myfifo_write_default = "/tmp/myfifo_c-s_def";
 
 std::string myfifo_read = "/tmp/myfifo_s-c_" + std::to_string(getpid());
@@ -21,9 +72,7 @@ bool default_connection() {
     mkfifo(myfifo_read.c_str(), 0666);
     mkfifo(myfifo_write.c_str(), 0666);
     mkfifo(myfifo_write_default.c_str(), 0666);
-    std::cout << "Trying connect to server" << std::endl;
     int fd_write_default = open(myfifo_write_default.c_str(), O_WRONLY);
-    std::cout << "Open default write fifo" << std::endl;
     std::string reply;
     Message msg_to_server(Commands::connect, "", getpid());
     Message reply_from_server(Commands::fail, reply, 0);
@@ -35,11 +84,9 @@ bool default_connection() {
 
     fdR = open(myfifo_read.c_str(), O_RDONLY);
     fdW = open(myfifo_write.c_str(), O_WRONLY);
-    std::cout << "Open write read fifo" << std::endl;
     recv(fdR, reply_from_server);
 
     if (reply_from_server._cmd == success) {
-        std::cout << "Succesfully connected" << std::endl;
         return true;
     } else {
         close(fdR);
@@ -49,7 +96,7 @@ bool default_connection() {
     }
 }
 
-void start_game(Battlefield &btf) {
+bool start_game(Battlefield &btf) {
     while (btf.one_amount() < 1 && btf.two_amount() < 1 && btf.three_amount() < 1 && btf.four_amount() < 1) {
         std::cout << btf.one_amount() << ' ' << btf.two_amount() << ' ' << btf.three_amount() << ' ' << btf.four_amount() << std::endl;
         btf.print();
@@ -73,8 +120,11 @@ void start_game(Battlefield &btf) {
             Message reply(Commands::fail, "", -1);
             recv(fdR, reply);
             if (reply._cmd != success) {
+                if (reply._cmd == disconnect) {
+                    return 0;
+                }
                 throw std::logic_error("Not placed");
-            }
+            } 
         } else {
             std::cout << "You have done something wrong" << std::endl;
         }
@@ -83,9 +133,10 @@ void start_game(Battlefield &btf) {
     btf.print();
     Message msg_to_server(Commands::ready_to_play, "", getpid());
     send(fdW, msg_to_server);
+    return 1;
 }
 
-void operate_game(Battlefield &own, Battlefield &opponent, int number) {
+bool operate_game(Battlefield &own, Battlefield &opponent, int number) {
     if (number == 1) {
         while (1) {
             own.print(); opponent.print();
@@ -93,7 +144,7 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
             std::cout << "Please, enter coordinates of ship.\nExample: B 7 " << std::endl;
             std::cin >> column >> row;
             std::string msg = column + ' ' + std::to_string(row);
-            Message msg_to_server(Commands::kill, msg, getpid());
+            Message msg_to_server(Commands::kill_ship, msg, getpid());
             Message is_killed(Commands::fail, "", -1);
             send(fdW, msg_to_server);
             recv(fdR, is_killed);
@@ -102,12 +153,12 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
                 opponent.set(is_killed._data[0], is_killed._pid, '+');
             } else if (is_killed._cmd == end_game) {
                 std::cout << is_killed._data << std::endl;
-                break;
+                return 1;
             } else if (is_killed._cmd == fail) {
                 opponent.set(column[0], row, '*');
                 std::cout << is_killed._data << std::endl;
-            } else {
-                throw std::logic_error("unknown cmd");
+            } else if (is_killed._cmd == disconnect ){
+                return 0;
             }
             own.print(); opponent.print();
             std::cout << "Waiting opponent" << std::endl;
@@ -119,12 +170,12 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
                 own.set(opponent_move._data[0], opponent_move._pid, '+');
             } else if (opponent_move._cmd == end_game) {
                 std::cout << opponent_move._data << std::endl;
-                break;
+                return 1;
             } else if (opponent_move._cmd == fail) {
                 own.set(opponent_move._data[0], opponent_move._pid, '*');
                 std::cout << opponent_move._data << std::endl;
-            } else {
-                throw std::logic_error("unknown cmd");
+            } else if (opponent_move._cmd == disconnect) {
+                return 0;
             }
         }
     } else {
@@ -138,19 +189,21 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
                 std::cout << opponent_move._data << std::endl;
             } else if (opponent_move._cmd == end_game) {
                 std::cout << opponent_move._data << std::endl;
-                break;
+                return 1;
             } else if (opponent_move._cmd == fail) {
                 own.set(opponent_move._data[0], opponent_move._pid, '*');
                 std::cout << opponent_move._data << std::endl;
+            } else if (opponent_move._cmd == disconnect) {
+                return 0;
             } else {
-                throw std::logic_error("unknown cmd");
+                throw std::logic_error("unknown command");
             }
             own.print(); opponent.print();
             std::string column; int row;
             std::cout << "Please, enter coordinates of ship.\nExample: B 7 " << std::endl;
             std::cin >> column >> row;
             std::string msg = column + ' ' + std::to_string(row);
-            Message msg_to_server(Commands::kill, msg, getpid());
+            Message msg_to_server(Commands::kill_ship, msg, getpid());
             Message is_killed(Commands::fail, "", -1);
             send(fdW, msg_to_server);
             recv(fdR, is_killed);
@@ -159,10 +212,12 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
                 opponent.set(is_killed._data[0], is_killed._pid, '+');
             } else if (is_killed._cmd == end_game) {
                 std::cout << is_killed._data << std::endl;
-                break;
+                return 1;
             } else if (is_killed._cmd == fail) {
                 opponent.set(column[0], row, '*');
                 std::cout << is_killed._data << std::endl;
+            } else if (is_killed._cmd == disconnect) {
+                return 0;
             } else {
                 throw std::logic_error("unknown cmd");
             }
@@ -171,45 +226,45 @@ void operate_game(Battlefield &own, Battlefield &opponent, int number) {
 }
 
 int main(int argc, char* argv[]) {
-    // Battlefield btf;
-    // start_game(btf);
+    text_art();
     default_connection();
-    std::string input;
+    std::cout << "Welcome to menu! Follow instruction:\n\n";
+    std::cout << "| [login *username*] to login in account |    | [create *username*] to create new account |    |";
+    std::cout << " [find *opponent*] to find opponent |    | [stats 1] for print your account stats |\n" << std::endl;
+    std::string input, login;
     while (1) {
-        std::cout << "Write command" << std::endl;
-        std::cin >> input;
+        std::cout << "Place for your command: ";
+        std::cin >> input >> login;
         if (input == "login") {
             if (username != "") {
-                std::cout << "You are already autorized in " + username << std::endl;
+                std::cout << "\nYou are already loged in " + username << ' ' << '\n' << std::endl;
                 continue;
             }
-            std::string login, reply;
-            std::cin >> login;
+            std::string reply;
             Message msg_to_server(Commands::login, login, getpid());
             Message reply_from_server(Commands::login, reply, 0);
             send(fdW, msg_to_server);
             recv(fdR, reply_from_server);
             if (reply_from_server._cmd == success) {
-                std::cout << "Accout succesfuly autorized " << reply_from_server._data << std::endl;
+                std::cout << "\nAccout succesfully login in " << reply_from_server._data << std::endl;
                 username = login;
             } else if (reply_from_server._cmd == fail) {
-                std::cout << reply_from_server._data << std::endl;
+                std::cout << '\n' << reply_from_server._data << std::endl;
             }
-        } else if (input == "make") {
-            std::string login, reply;
-            std::cin >> login;
+        } else if (input == "create") {
+            std::string reply;
             Message msg_to_server(Commands::create_user, login, getpid());
             Message reply_from_server(create_user, reply, -1);
             send(fdW, msg_to_server);
             recv(fdR, reply_from_server);
             if (reply_from_server._cmd == success) {
-                std::cout << "Accout succesfuly created " << reply_from_server._data << std::endl;
+                std::cout << "\nAccout succesfuly created " << reply_from_server._data << std::endl;
             } else if (reply_from_server._cmd == fail) {
-                std::cout << "Account is exist already " << reply_from_server._data << std::endl;
+                std::cout << "\nAccount is exist already " << reply_from_server._data << std::endl;
             }
         } else if (input == "stats") {
             if (username == "") {
-                std::cout << "You are not authorized" << std::endl;
+                std::cout << "\nYou are not authorized" << std::endl;
                 continue;
             }
             Message msg_to_server(Commands::stats, username, getpid());
@@ -223,12 +278,10 @@ int main(int argc, char* argv[]) {
                 std::cout << "something wrong " << reply_from_server._data << std::endl;
             }
         } else if (input == "find") {
-            std::string login;
             if (username == "") {
                 std::cout << "You are not authorized" << std::endl;
                 continue;
             }
-            std::cin >> login;
             if (username == login) {
                 std::cout << "You can't play with yourself" << std::endl;
                 continue;
@@ -238,17 +291,24 @@ int main(int argc, char* argv[]) {
             Message reply_from_server(fail, "", -1);
             recv(fdR, reply_from_server);
             if (reply_from_server._cmd == success) {
-                std::cout << reply_from_server._data << std::endl;
+                std::cout <<  '\n' << reply_from_server._data << std::endl;
                 Battlefield own_battlefield;
                 Battlefield opponent_battlefield;
-                start_game(own_battlefield);
+                if (!start_game(own_battlefield)) {
+                    std::cout << "Opponent disconnected" << std::endl;
+                    fsync(fdR);
+                    continue;
+                }
                 recv(fdR, reply_from_server);
                 if (reply_from_server._cmd == success) {
-                    std::cout << reply_from_server._data << ' ' << reply_from_server._pid << std::endl;
-                    operate_game(own_battlefield, opponent_battlefield, reply_from_server._pid);
+                    if (!operate_game(own_battlefield, opponent_battlefield, reply_from_server._pid)) {
+                        std::cout << "Opponent disconnected" << std::endl;
+                        fsync(fdR);
+                        continue;
+                    }
                 }
             } else {
-                std::cout << reply_from_server._data << std::endl;
+                std::cout << '\n' << reply_from_server._data << std::endl;
             }
         }
         std::cout << std::endl;

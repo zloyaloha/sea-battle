@@ -15,8 +15,10 @@ enum Commands {
     find,
     place_ship,
     ready_to_play,
-    kill,
-    end_game
+    kill_ship,
+    end_game,
+    clear,
+    disconnect
 };
 
 struct Message {
