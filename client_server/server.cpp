@@ -340,7 +340,7 @@ class Server {
                             Message msg_to_client(Commands::success, msg_to_make._data, -1);
                             send_to(msg_to_make._pid, msg_to_client);      
                         } else {
-                            Message msg_to_client(Commands::fail, "Fatal error", -1);
+                            Message msg_to_client(Commands::fail, "No account with this username", -1);
                             send_to(msg_to_make._pid, msg_to_client);      
                         }
                         std::cout << "Login:\n";
@@ -459,7 +459,7 @@ class Server {
                                 }
                             } else {
                                 Message msg_to_client1(Commands::fail, "Failed attempt", 1);
-                                Message msg_to_client2(Commands::fail, "Opponent missed", 2);
+                                Message msg_to_client2(Commands::fail, column, row);
                                 send_to(deduction_proccess->pid1, msg_to_client1);
                                 send_to(deduction_proccess->pid2, msg_to_client2);
                             }
@@ -486,7 +486,7 @@ class Server {
                                 }
                             } else {
                                 Message msg_to_client2(Commands::fail, "Failed attempt", 1);
-                                Message msg_to_client1(Commands::fail, "Opponent missed", 2);
+                                Message msg_to_client1(Commands::fail, column, row);
                                 send_to(deduction_proccess->pid1, msg_to_client1);
                                 send_to(deduction_proccess->pid2, msg_to_client2);
                             }

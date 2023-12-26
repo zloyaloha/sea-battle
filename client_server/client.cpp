@@ -98,23 +98,14 @@ bool default_connection() {
 
 bool start_game(Battlefield &btf) {
     while (btf.one_amount() < 1 && btf.two_amount() < 1 && btf.three_amount() < 1 && btf.four_amount() < 1) {
-        std::cout << btf.one_amount() << ' ' << btf.two_amount() << ' ' << btf.three_amount() << ' ' << btf.four_amount() << std::endl;
         btf.print();
         int a,b,c,d;
         std::cout << "Please, enter direction (0 for horizontal, 1 for " \
             "vertical), coordinates of ship and his type.\nExample: 0 A 1 4" << std::endl;
-        // char column; int row; int type; int direction;
-        // std::cin >> direction >> column >> row >> type;
-        std::cin >> d;
-        srand(getpid() + time(NULL));
-        a = rand() % 10;
-        b = rand() % 10 + 1;
-        c = rand() % 2;
-        d = rand() % 4 + 1;
-        char column = a + 'A';
-        // std::string msg = std::to_string(direction) + ' ' + column + ' ' + std::to_string(row) + ' ' + std::to_string(type);
-        std::string msg = std::to_string(c) + ' ' + column + ' ' + std::to_string(b) + ' ' + std::to_string(d);
-        if (btf.place_ship(column, b, Direction(c), ShipType(d)) == 0) {
+        char column; int row; int type; int direction;
+        std::cin >> direction >> column >> row >> type;
+        std::string msg = std::to_string(direction) + ' ' + column + ' ' + std::to_string(row) + ' ' + std::to_string(type);
+        if (btf.place_ship(column, row, Direction(direction), ShipType(type)) == 0) {
             Message msg_to_server(Commands::place_ship, msg, getpid());
             send(fdW, msg_to_server);
             Message reply(Commands::fail, "", -1);
@@ -126,9 +117,8 @@ bool start_game(Battlefield &btf) {
                 throw std::logic_error("Not placed");
             } 
         } else {
-            std::cout << "You have done something wrong" << std::endl;
+            std::cout << "\nYou have done something wrong" << std::endl;
         }
-        // sleep(rand() % 3 + 1);
     }
     btf.print();
     Message msg_to_server(Commands::ready_to_play, "", getpid());
@@ -258,7 +248,7 @@ int main(int argc, char* argv[]) {
             send(fdW, msg_to_server);
             recv(fdR, reply_from_server);
             if (reply_from_server._cmd == success) {
-                std::cout << "\nAccout succesfuly created " << reply_from_server._data << std::endl;
+                std::cout << "\nAccount succesfuly created " << reply_from_server._data << std::endl;
             } else if (reply_from_server._cmd == fail) {
                 std::cout << "\nAccount is exist already " << reply_from_server._data << std::endl;
             }
@@ -275,7 +265,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "\nStats of: " << username << std::endl;
                 std::cout << "Win-Lose: " << reply_from_server._data << std::endl;
             } else if (reply_from_server._cmd == fail) {
-                std::cout << "something wrong " << reply_from_server._data << std::endl;
+                std::cout << "Shit happened " << reply_from_server._data << std::endl;
             }
         } else if (input == "find") {
             if (username == "") {
@@ -291,7 +281,6 @@ int main(int argc, char* argv[]) {
             Message reply_from_server(fail, "", -1);
             recv(fdR, reply_from_server);
             if (reply_from_server._cmd == success) {
-                std::cout <<  '\n' << reply_from_server._data << std::endl;
                 Battlefield own_battlefield;
                 Battlefield opponent_battlefield;
                 if (!start_game(own_battlefield)) {

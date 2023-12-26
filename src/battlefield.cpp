@@ -137,7 +137,7 @@ int Battlefield::place_ship(char column_char, int row, Direction dir, ShipType s
 
 void Battlefield::set(char column, int tmp, char mark) {
     int y = column - 'A';
-    int x = tmp;
+    int x = tmp - 1;
     _btf[x][y] = mark;
 }
 
