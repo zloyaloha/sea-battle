@@ -97,7 +97,7 @@ bool default_connection() {
 }
 
 bool start_game(Battlefield &btf) {
-    while (btf.one_amount() < 1 && btf.two_amount() < 1 && btf.three_amount() < 1 && btf.four_amount() < 1) {
+    while (btf.one_amount() != 4 && btf.two_amount() != 3 && btf.three_amount() != 2 && btf.four_amount() != 1) {
         btf.print();
         int a,b,c,d;
         std::cout << "Please, enter direction (0 for horizontal, 1 for " \
