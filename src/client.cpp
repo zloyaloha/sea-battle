@@ -12,7 +12,7 @@ Client::Client(int pid) {
     int fd_write_default = open(myfifo_write_default.c_str(), O_WRONLY);
     std::string reply;
     Message msg_to_server(Commands::connect, "", getpid());
-    Message reply_from_server(Commands::fail, reply, 0);
+    Message reply_from_server;
     send(fd_write_default, msg_to_server);
     if (close(fd_write_default) == -1) {
         throw std::logic_error("bad with close");
@@ -30,15 +30,15 @@ Client::Client(int pid) {
     }
 }
 
-bool Client::startGame(Battlefield &btf) {
-    while (btf.one_amount() != 4 && btf.two_amount() != 3 && btf.three_amount() != 2 && btf.four_amount() != 1) {
-        btf.print();
+bool GameOperator::placeShipRoutine() {
+    while (own.one_amount() != 4 && own.two_amount() != 3 && own.three_amount() != 2 && own.four_amount() != 1) {
+        own.print();
         std::cout << "Please, enter direction (0 for horizontal, 1 for " \
             "vertical), coordinates of ship and his type.\nExample: 0 A 1 4" << std::endl;
         char column; int row; int type; int direction;
         std::cin >> direction >> column >> row >> type;
         std::string msg = std::to_string(direction) + ' ' + column + ' ' + std::to_string(row) + ' ' + std::to_string(type);
-        if (btf.place_ship(column, row, Direction(direction), ShipType(type)) == 0) {
+        if (own.place_ship(column, row, Direction(direction), ShipType(type)) == 0) {
             Message msg_to_server(Commands::place_ship, msg, getpid());
             send(fdW, msg_to_server);
             Message reply(Commands::fail, "", -1);
@@ -53,97 +53,83 @@ bool Client::startGame(Battlefield &btf) {
             std::cout << "\nYou have done something wrong" << std::endl;
         }
     }
-    btf.print();
+    own.print();
     Message msg_to_server(Commands::ready_to_play, "", getpid());
     send(fdW, msg_to_server);
     return 1;
 }
 
-bool Client::gameInProcces(Battlefield &own, Battlefield &opponent, int number) {
-    if (number == 1) {
-        while (1) {
-            own.print(); opponent.print();
-            std::string column; int row;
-            std::cout << "Please, enter coordinates of ship.\nExample: B 7 " << std::endl;
-            std::cin >> column >> row;
-            std::string msg = column + ' ' + std::to_string(row);
+bool GameOperator::waitingOpponentRoutine() {
+    own.print(); opponent.print();
+    std::cout << "Waiting opponent" << std::endl;
+    Message opponent_move(Commands::fail, "", -1);
+    recv(fdR, opponent_move);
+    if (opponent_move._cmd == success) {
+        own.set(opponent_move._data[0], opponent_move._pid, '+');
+        std::cout << opponent_move._data << std::endl;
+    } else if (opponent_move._cmd == end_game) {
+        std::cout << opponent_move._data << std::endl;
+        return 1;
+    } else if (opponent_move._cmd == fail) {
+        own.set(opponent_move._data[0], opponent_move._pid, '*');
+        std::cout << opponent_move._data << std::endl;
+    } else if (opponent_move._cmd == disconnect) {
+        return 0;
+    } else {
+        throw std::logic_error("unknown command");
+    }
+    return 0;
+}
+
+void GameOperator::userChooseChunckForAttack(std::string &column, int &row) {
+    while (true) {
+        std::cout << "Please, enter coordinates of ship.\nExample: B 7 " << std::endl;
+        std::cin >> column >> row;
+        std::string msg = column + ' ' + std::to_string(row);
+        if (opponent.checkIfChunckIsAttackedAlready(column[0], row)) {
+            std::cout << "You are already attack this chunck\n" << std::endl;
+        } else {
             Message msg_to_server(Commands::kill_ship, msg, getpid());
-            Message is_killed(Commands::fail, "", -1);
             send(fdW, msg_to_server);
-            recv(fdR, is_killed);
-            if (is_killed._cmd == success) {
-                std::cout << is_killed._data << std::endl;
-                opponent.set(is_killed._data[0], is_killed._pid, '+');
-            } else if (is_killed._cmd == end_game) {
-                std::cout << is_killed._data << std::endl;
-                return 1;
-            } else if (is_killed._cmd == fail) {
-                opponent.set(column[0], row, '*');
-                std::cout << is_killed._data << std::endl;
-            } else if (is_killed._cmd == disconnect ){
-                return 0;
-            }
-            own.print(); opponent.print();
-            std::cout << "Waiting opponent" << std::endl;
-            Message opponent_move(Commands::fail, "", -1);
-            recv(fdR, opponent_move);
-            std::cout << opponent_move._cmd << ' ' << opponent_move._data << ' ' << opponent_move._pid << std::endl;
-            if (opponent_move._cmd == success) {
-                std::cout << opponent_move._data << std::endl;
-                own.set(opponent_move._data[0], opponent_move._pid, '+');
-            } else if (opponent_move._cmd == end_game) {
-                std::cout << opponent_move._data << std::endl;
-                return 1;
-            } else if (opponent_move._cmd == fail) {
-                own.set(opponent_move._data[0], opponent_move._pid, '*');
-                std::cout << opponent_move._data << std::endl;
-            } else if (opponent_move._cmd == disconnect) {
-                return 0;
-            }
+            break;
+        }
+    }
+}
+
+bool GameOperator::userMoveRoutine() {
+    own.print(); opponent.print();
+    std::string column; int row;
+    userChooseChunckForAttack(column, row);
+    Message is_killed;
+    recv(fdR, is_killed);
+    if (is_killed._cmd == success) {
+        std::cout << is_killed._data << std::endl;
+        opponent.set(column[0], row, '+');
+    } else if (is_killed._cmd == end_game) {
+        std::cout << is_killed._data << std::endl;
+        return 1;
+    } else if (is_killed._cmd == fail) {
+        opponent.set(column[0], row, '*');
+        std::cout << is_killed._data << std::endl;
+    } else if (is_killed._cmd == disconnect){
+        return 0;
+    } else {
+        throw std::logic_error("unknown command");
+    }
+    return 0;
+}
+
+
+bool GameOperator::gamingRoutine(int whoStarted) {
+    if (whoStarted == 1) {
+        while (1) {
+            userMoveRoutine();
+            waitingOpponentRoutine();
         }
     } else {
         while (1) {
-            own.print(); opponent.print();
-            std::cout << "Waiting opponent" << std::endl;
-            Message opponent_move(Commands::fail, "", -1);
-            recv(fdR, opponent_move);
-            if (opponent_move._cmd == success) {
-                own.set(opponent_move._data[0], opponent_move._pid, '+');
-                std::cout << opponent_move._data << std::endl;
-            } else if (opponent_move._cmd == end_game) {
-                std::cout << opponent_move._data << std::endl;
-                return 1;
-            } else if (opponent_move._cmd == fail) {
-                own.set(opponent_move._data[0], opponent_move._pid, '*');
-                std::cout << opponent_move._data << std::endl;
-            } else if (opponent_move._cmd == disconnect) {
-                return 0;
-            } else {
-                throw std::logic_error("unknown command");
-            }
-            own.print(); opponent.print();
-            std::string column; int row;
-            std::cout << "Please, enter coordinates of ship.\nExample: B 7 " << std::endl;
-            std::cin >> column >> row;
-            std::string msg = column + ' ' + std::to_string(row);
-            Message msg_to_server(Commands::kill_ship, msg, getpid());
-            Message is_killed(Commands::fail, "", -1);
-            send(fdW, msg_to_server);
-            recv(fdR, is_killed);
-            if (is_killed._cmd == success) {
-                std::cout << is_killed._data << std::endl;
-                opponent.set(is_killed._data[0], is_killed._pid, '+');
-            } else if (is_killed._cmd == end_game) {
-                std::cout << is_killed._data << std::endl;
-                return 1;
-            } else if (is_killed._cmd == fail) {
-                opponent.set(column[0], row, '*');
-                std::cout << is_killed._data << std::endl;
-            } else if (is_killed._cmd == disconnect) {
-                return 0;
-            } else {
-                throw std::logic_error("unknown cmd");
-            }
+            waitingOpponentRoutine();
+            userMoveRoutine();
         }
     }
 }
@@ -155,7 +141,7 @@ bool Client::loginToAccount(const std::string &login) {
     }
     std::string reply;
     Message msg_to_server(Commands::login, login, getpid());
-    Message reply_from_server(Commands::login, reply, 0);
+    Message reply_from_server;
     send(fdW, msg_to_server);
     recv(fdR, reply_from_server);
     if (reply_from_server._cmd == success) {
@@ -190,13 +176,12 @@ bool Client::createAccount(const std::string &login) {
 }
 
 bool Client::getStats() {
-    if (username == "") {
-        std::cout << "\nYou are not authorized" << std::endl;
+    if (!isAuthorized()) {
         return 0;
     }
     Message msg_to_server(Commands::stats, username, getpid());
     send(fdW, msg_to_server);
-    Message reply_from_server(create_user, "", -1);
+    Message reply_from_server;
     recv(fdR, reply_from_server);
     if (reply_from_server._cmd == success) {
         std::cout << "\nStats of: " << username << std::endl;
@@ -211,9 +196,17 @@ bool Client::getStats() {
     }
 }
 
-bool Client::gameOperating(const std::string &login) {
-    if (username == "") {
+bool Client::isAuthorized() {
+    if (username.empty()) {
         std::cout << "You are not authorized" << std::endl;
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+bool Client::gameOperating(const std::string &login) {
+    if (!isAuthorized()) {
         return 0;
     }
     if (username == login) {
@@ -222,19 +215,18 @@ bool Client::gameOperating(const std::string &login) {
     }
     Message msg_to_server(Commands::find, login, getpid());
     send(fdW, msg_to_server);
-    Message reply_from_server(fail, "", -1);
+    Message reply_from_server;
     recv(fdR, reply_from_server);
     if (reply_from_server._cmd == success) {
-        Battlefield own_battlefield;
-        Battlefield opponent_battlefield;
-        if (!startGame(own_battlefield)) {
+        GameOperator gameOperator(fdR, fdW);
+        if (!gameOperator.placeShipRoutine()) {
             std::cout << "Opponent disconnected" << std::endl;
             fsync(fdR);
             return 0;
         }
         recv(fdR, reply_from_server);
         if (reply_from_server._cmd == success) {
-            if (!gameInProcces(own_battlefield, opponent_battlefield, reply_from_server._pid)) {
+            if (!gameOperator.gamingRoutine(reply_from_server._pid)) {
                 std::cout << "Opponent disconnected" << std::endl;
                 fsync(fdR);
                 return 0;
@@ -244,6 +236,7 @@ bool Client::gameOperating(const std::string &login) {
         std::cout << '\n' << reply_from_server._data << std::endl;
         return 1;
     }
+    return 0;
 }
 
 void Client::exec() {

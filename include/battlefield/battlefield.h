@@ -40,4 +40,5 @@ class Battlefield {
         int one_amount() { return ships_amount.find(one_square)->second;}
         bool end_game_check();
         void set(char column, int x, char mark);
+        bool checkIfChunckIsAttackedAlready(char x, int y);
 };

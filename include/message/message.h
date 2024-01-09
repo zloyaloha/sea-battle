@@ -24,7 +24,7 @@ enum Commands {
 
 struct Message {
     Message(Commands cmd, std::string msg, int pid);
-    Message() = default;
+    Message() : _cmd(fail), _data(0), _pid(0) {}
     Commands _cmd;
     char _data[64];
     int _pid;

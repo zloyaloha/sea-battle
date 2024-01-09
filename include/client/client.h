@@ -20,11 +20,24 @@ class Client {
         bool createAccount(const std::string &login);
         bool getStats();
         bool gameOperating(const std::string &login);
-        bool startGame(Battlefield &btf);
-        bool gameInProcces(Battlefield &own, Battlefield &opponent, int number);
         void textArt();
+        bool isAuthorized();
     private:
         std::string myfifo_read, myfifo_write;
         std::string username;
         int fdR, fdW;
+};
+
+class GameOperator {
+    private:
+        Battlefield own, opponent;
+        int fdR, fdW;
+    public:
+        GameOperator() = default;
+        GameOperator(int setFdR, int setFdW) : fdR(setFdR), fdW(setFdW) {};
+        bool placeShipRoutine();
+        bool userMoveRoutine();
+        bool waitingOpponentRoutine();
+        bool gamingRoutine(int num);
+        void userChooseChunckForAttack(std::string &column, int &row);
 };

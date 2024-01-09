@@ -152,3 +152,9 @@ bool Battlefield::try_kill(char column, int y) {
         return false;
     }
 }
+
+bool Battlefield::checkIfChunckIsAttackedAlready(char column, int y) {
+    int x = y - 1;
+    y = column - 'A';
+    return _btf[x][y] == '*' || _btf[x][y] == '+';
+}
