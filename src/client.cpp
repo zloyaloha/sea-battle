@@ -121,14 +121,28 @@ bool GameOperator::userMoveRoutine() {
 bool GameOperator::gamingRoutine(int whoStarted) {
     if (whoStarted == 1) {
         while (1) {
-            userMoveRoutine();
-            waitingOpponentRoutine();
+            if (!userMoveRoutine()) {
+                return false;
+            } else {
+                return true;
+            }
+            if (!waitingOpponentRoutine()) {
+                return false;
+            } else {
+                return true;
+            }
         }
     } else {
-        while (1) {
-            waitingOpponentRoutine();
-            userMoveRoutine();
+        if (!waitingOpponentRoutine()) {
+            return false;
+        } else {
+            return true;
         }
+        if (!userMoveRoutine()) {
+                return false;
+            } else {
+                return true;
+            }
     }
 }
 
@@ -247,9 +261,12 @@ bool Client::gameOperating(const std::string &login) {
                 return 0;
             }
         }
-    } else {
+    } else if (reply_from_server._cmd == fail) {
         std::cout << '\n' << reply_from_server._data << std::endl;
         return 1;
+    } else {
+        std::cout << '\n' << reply_from_server._cmd << std::endl;
+        throw std::logic_error("unknown command");
     }
     return 0;
 }

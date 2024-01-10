@@ -412,7 +412,6 @@ void Server::attackConcreteUsername(Battlefield *btf, Game *deduction_proccess, 
 
 void Server::userAttackOpponentBattleField(const Message &msg_for_attack) {
     auto *deduction_proccess = &_active_games[_users[msg_for_attack._pid].game_index];
-
     if (deduction_proccess->pid1 == msg_for_attack._pid) {
         attackConcreteUsername(deduction_proccess->btf2, deduction_proccess, msg_for_attack);
     } else if (deduction_proccess->pid2 == msg_for_attack._pid) {
