@@ -1,6 +1,7 @@
 #include "client.h"
 
 int main(int argc, char* argv[]) {
+    std::cout << "Waiting connection to server\n\n";
     Client client(getpid());
     client.textArt();
     std::cout << "Welcome to menu! Follow instruction:\n\n";

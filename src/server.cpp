@@ -23,7 +23,7 @@ void Server::tokenize(std::string input, int &direction, std::string &column, in
     }
 }
 
-void Server::updateResult(const std::string& username, bool isWin) {
+void Server::updateResultInBD(const std::string& username, bool isWin) {
     sqlite3 *db;
     if (sqlite3_open("../db/users.db", &db) != SQLITE_OK) {
         std::cerr << "Ошибка при открытии базы данных: " << sqlite3_errmsg(db) << std::endl;
@@ -232,6 +232,200 @@ void Server::try_recv() {
 void Server::send_to(int pid, Message &msg) {
     send(_users[pid].fdW, msg);
 }
+void Server::userCreatingRoutine(const Message &msg_for_making_new_user) {
+    bool success = add_user(msg_for_making_new_user._data);
+    if (success) {
+        Message msg_to_client(Commands::success, msg_for_making_new_user._data, -1);
+        send_to(msg_for_making_new_user._pid, msg_to_client);   
+    } else {
+        Message msg_to_client(Commands::fail, msg_for_making_new_user._data, -1);
+        send_to(msg_for_making_new_user._pid, msg_to_client);      
+    }
+}
+
+void Server::clearAllDependenciesOfUser(const Message &msg_for_clear) {
+    std::cout << "proccess with pid = " << msg_for_clear._pid << " disconnect" << std::endl;
+    auto game_of_disconnected = _active_games.find(_users[msg_for_clear._pid].game_index);
+    if (game_of_disconnected != _active_games.end()) {
+        if (game_of_disconnected->second.pid1 == msg_for_clear._pid) {
+            _users[game_of_disconnected->second.pid2].game_status = 0;
+            Message msg_to_client(disconnect, "", -1);
+            send_to(game_of_disconnected->second.pid2, msg_to_client);
+        } else if (game_of_disconnected->second.pid2 == msg_for_clear._pid) {
+            _users[game_of_disconnected->second.pid1].game_status = 0;
+            Message msg_to_client(disconnect, "", -1);
+            send_to(game_of_disconnected->second.pid1, msg_to_client);
+        }
+        _active_games.erase(_users[msg_for_clear._pid].game_index);
+    }
+    close(_users[msg_for_clear._pid].fdW);
+    close(_users[msg_for_clear._pid].fdR);
+    _fdR.erase(std::find(_fdR.begin(), _fdR.end(), _users[msg_for_clear._pid].fdR));
+    _users.erase(_users.find(msg_for_clear._pid));
+}
+
+void Server::CheckAvailableUsernameAndLoginAccount(const Message &msg_for_login) {
+    bool not_available_login = is_authorized_by_username(msg_for_login._data); 
+    if (not_available_login) {
+        Message msg_to_client(Commands::fail, "This username is already logged", -1);
+        send_to(msg_for_login._pid, msg_to_client);
+        return;
+    }
+    bool success = autorize(msg_for_login._data);
+    if (success) {
+        _users[msg_for_login._pid].username = std::string(msg_for_login._data);
+        Message msg_to_client(Commands::success, msg_for_login._data, -1);
+        send_to(msg_for_login._pid, msg_to_client);      
+    } else {
+        Message msg_to_client(Commands::fail, "No account with this username", -1);
+        send_to(msg_for_login._pid, msg_to_client);      
+    }
+    std::cout << "Login:\n";
+    for (auto iter: _users) {
+        std::cout << iter.second.username << ' ' << iter.second.pid << std::endl;
+    }
+}
+
+void Server::sendToClientInfoAboutStats(const Message &msg_for_stats) {
+    if (is_authorized_by_pid(msg_for_stats._pid)) { 
+        auto [win, lose] = user_stats(msg_for_stats._data);
+        Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
+        send_to(msg_for_stats._pid, msg_to_client);   
+    } else {
+        Message msg_to_client(Commands::fail, "not_autorized", -1);
+        send_to(msg_for_stats._pid, msg_to_client);   
+    }
+}
+
+void Server::makeConnectionBetweenServerAndClient(const Message &msg_for_connect) {
+    std::cout << "Making connection pipe for proc " << msg_for_connect._pid << std::endl;
+    std::string name_fifo_read = "/tmp/myfifo_c-s_" + std::to_string(msg_for_connect._pid);
+    std::string name_fifo_write = "/tmp/myfifo_s-c_" + std::to_string(msg_for_connect._pid);
+    mkfifo(name_fifo_read.c_str(), 0666);
+    mkfifo(name_fifo_write.c_str(), 0666);
+    int fd_write = open(name_fifo_write.c_str(), O_WRONLY);
+    int fd_read = open(name_fifo_read.c_str(), O_RDONLY | O_NONBLOCK);
+    _fdR.push_back(fd_read);
+    User tmp_user{"", msg_for_connect._pid, fd_write, 0, 0, fd_read};
+    _users.insert({msg_for_connect._pid, tmp_user});
+    auto elem = _users.find(msg_for_connect._pid);
+    Message msg_to_client(Commands::success, "Succesfully connected", -1);
+    if (elem != _users.end()) {
+        send_to(elem->second.pid, msg_to_client);
+    }
+}
+
+void Server::findOpponentForUser(const Message &msg_for_find) {
+    std::cout << "Find opponent for " << _users[msg_for_find._pid].username << std::endl;
+    if (is_authorized_by_username(msg_for_find._data)) {
+        if (search_by_username(std::string(msg_for_find._data))->second.game_status == 1) {
+            Message msg_to_client1(Commands::success, "Succesfully connected1", -1);
+            Message msg_to_client2(Commands::success, "Succesfully connected2", -1);
+            auto *user1 = &_users[msg_for_find._pid];
+            auto *user2 = &search_by_username(std::string(msg_for_find._data))->second;
+            user1->game_status = 2;
+            user2->game_status = 2;
+            user1->game_index = active_game_counter;
+            user2->game_index = active_game_counter;
+            Game game(user1->pid, user2->pid, user1->username, user2->username);
+            _active_games.insert({active_game_counter, game});
+            active_game_counter++;
+            send_to(user2->pid, msg_to_client2);
+            send_to(user1->pid, msg_to_client1);
+        } else {
+            _users[msg_for_find._pid].game_status = 1;
+        }
+    } else {
+        Message msg_to_client(Commands::fail, "Opponent not online", -1);
+        send_to(msg_for_find._pid, msg_to_client);
+    }
+}
+
+void Server::placeShipOnBattleField(const Message &msg_for_place_ship) {
+    std::cout << msg_for_place_ship._data << std::endl;
+    std::string column; int row; int type; int direction;
+    tokenize(std::string(msg_for_place_ship._data), direction, column, row, type);
+    auto *deduction_proccess = &_active_games[_users[msg_for_place_ship._pid].game_index];
+    if (deduction_proccess->pid1 == msg_for_place_ship._pid) {
+        std::cout << "Place on first" << std::endl;
+        deduction_proccess->btf1->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
+        Message msg_to_client1(Commands::success, "Succesfully placed", -1);
+        send_to(msg_for_place_ship._pid, msg_to_client1);
+    } else if (deduction_proccess->pid2 == msg_for_place_ship._pid) {
+        std::cout << "Place on second" << std::endl;
+        deduction_proccess->btf2->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
+        Message msg_to_client1(Commands::success, "Succesfully placed", -1);
+        send_to(msg_for_place_ship._pid, msg_to_client1);
+    } else {
+        std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
+        return;
+    }
+    deduction_proccess->btf1->print();
+    deduction_proccess->btf2->print();
+}
+
+void Server::makeUsersStatusToGameActive(const Message &msg_for_change_status) {
+    auto *deduction_proccess = &_active_games[_users[msg_for_change_status._pid].game_index];
+    Message msg_to_client1(Commands::success, "Ready to play", 1);
+    Message msg_to_client2(Commands::success, "Ready to play", 2);
+    if (deduction_proccess->pid1 == msg_for_change_status._pid && _users[deduction_proccess->pid2].game_status == 3) {
+        send_to(deduction_proccess->pid1, msg_to_client1);
+        send_to(deduction_proccess->pid2, msg_to_client2);
+    }
+    if (deduction_proccess->pid2 == msg_for_change_status._pid && _users[deduction_proccess->pid1].game_status == 3) {
+        send_to(deduction_proccess->pid1, msg_to_client1);
+        send_to(deduction_proccess->pid2, msg_to_client2);
+    }
+    _users[msg_for_change_status._pid].game_status = 3;
+}
+
+void Server::attackConcreteUsername(Battlefield *btf, Game *deduction_proccess, const Message &msg_for_attack) {
+    std::string column; int row; int type; int direction;
+    tokenize(std::string(msg_for_attack._data), direction, column, row, type);
+    bool success = btf->try_kill(column.c_str()[0], row);
+    if (success) {
+        if (btf->end_game_check()) {
+            Message msg_to_client1(Commands::end_game, "You win", 1);
+            Message msg_to_client2(Commands::end_game, "You lose", 2);
+            updateResultInBD(deduction_proccess->username1, 1);
+            updateResultInBD(deduction_proccess->username2, 0);
+            _active_games.erase(_active_games.find(_users[msg_for_attack._pid].game_index));
+            _users[deduction_proccess->pid2].game_status = 0;
+            _users[deduction_proccess->pid1].game_status = 0;
+            _users[deduction_proccess->pid2].game_index = 0;
+            _users[deduction_proccess->pid1].game_index = 0;
+            send_to(deduction_proccess->pid1, msg_to_client1);
+            send_to(deduction_proccess->pid2, msg_to_client2);
+        } else {
+            Message msg_to_client1(Commands::success, "Catch", 1);
+            Message msg_to_client2(Commands::success, column, row);
+            send_to(deduction_proccess->pid1, msg_to_client1);
+            send_to(deduction_proccess->pid2, msg_to_client2);
+        }
+    } else {
+        Message msg_to_client1(Commands::fail, "Failed attempt", 1);
+        Message msg_to_client2(Commands::fail, column, row);
+        send_to(deduction_proccess->pid1, msg_to_client1);
+        send_to(deduction_proccess->pid2, msg_to_client2);
+    }
+}
+
+void Server::userAttackOpponentBattleField(const Message &msg_for_attack) {
+    auto *deduction_proccess = &_active_games[_users[msg_for_attack._pid].game_index];
+
+    if (deduction_proccess->pid1 == msg_for_attack._pid) {
+        attackConcreteUsername(deduction_proccess->btf2, deduction_proccess, msg_for_attack);
+    } else if (deduction_proccess->pid2 == msg_for_attack._pid) {
+        attackConcreteUsername(deduction_proccess->btf1, deduction_proccess, msg_for_attack);
+    } else {
+        Message msg_to_client(Commands::disconnect, "", -1);
+        send_to(msg_for_attack._pid, msg_to_client);
+        std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
+        return;
+    }
+    deduction_proccess->btf1->print();
+    deduction_proccess->btf2->print();
+}
 
 void Server::exec() {
     while (1) {
@@ -240,202 +434,34 @@ void Server::exec() {
             Message msg_to_make;
             msg_to_make = _msgs.front();
             _msgs.pop();
-            if (msg_to_make._cmd == create_user) {
-                bool success = add_user(msg_to_make._data);
-                if (success) {
-                    Message msg_to_client(Commands::success, msg_to_make._data, -1);
-                    send_to(msg_to_make._pid, msg_to_client);   
-                } else {
-                    Message msg_to_client(Commands::fail, msg_to_make._data, -1);
-                    send_to(msg_to_make._pid, msg_to_client);      
-                }
-            } else if (msg_to_make._cmd == Commands::clear) {
-                std::cout << "proccess with pid = " << msg_to_make._pid << " disconnect" << std::endl;
-                auto game_of_disconnected = _active_games.find(_users[msg_to_make._pid].game_index);
-                if (game_of_disconnected != _active_games.end()) {
-                    if (game_of_disconnected->second.pid1 == msg_to_make._pid) {
-                        _users[game_of_disconnected->second.pid2].game_status = 0;
-                        Message msg_to_client(Commands::disconnect, "", -1);
-                        send_to(game_of_disconnected->second.pid2, msg_to_client);
-                    } else if (game_of_disconnected->second.pid2 == msg_to_make._pid) {
-                        _users[game_of_disconnected->second.pid1].game_status = 0;
-                        Message msg_to_client(Commands::disconnect, "", -1);
-                        send_to(game_of_disconnected->second.pid1, msg_to_client);
-                    }
-                    _active_games.erase(_users[msg_to_make._pid].game_index);
-                }
-                close(_users[msg_to_make._pid].fdW);
-                close(_users[msg_to_make._pid].fdR);
-                _fdR.erase(std::find(_fdR.begin(), _fdR.end(), _users[msg_to_make._pid].fdR));
-                _users.erase(_users.find(msg_to_make._pid));
-            } else if (msg_to_make._cmd == Commands::login) {
-                bool not_available_login = is_authorized_by_username(msg_to_make._data); 
-                if (not_available_login) {
-                    Message msg_to_client(Commands::fail, "This username is already logged", -1);
-                    send_to(msg_to_make._pid, msg_to_client);
-                    continue;
-                }
-                bool success = autorize(msg_to_make._data);
-                if (success) {
-                    _users[msg_to_make._pid].username = std::string(msg_to_make._data);
-                    Message msg_to_client(Commands::success, msg_to_make._data, -1);
-                    send_to(msg_to_make._pid, msg_to_client);      
-                } else {
-                    Message msg_to_client(Commands::fail, "No account with this username", -1);
-                    send_to(msg_to_make._pid, msg_to_client);      
-                }
-                std::cout << "Login:\n";
-                for (auto iter: _users) {
-                    std::cout << iter.second.username << ' ' << iter.second.pid << std::endl;
-                }
-            } else if (msg_to_make._cmd == Commands::stats) {
-                if (is_authorized_by_pid(msg_to_make._pid)) { 
-                    auto [win, lose] = user_stats(msg_to_make._data);
-                    Message msg_to_client(Commands::success, std::to_string(win) + ' ' + std::to_string(lose), -1);
-                    send_to(msg_to_make._pid, msg_to_client);   
-                } else {
-                    Message msg_to_client(Commands::fail, "not_autorized", -1);
-                    send_to(msg_to_make._pid, msg_to_client);   
-                }
-            } else if (msg_to_make._cmd == Commands::connect) {
-                std::cout << "Making connection pipe for proc " << msg_to_make._pid << std::endl;
-                std::string name_fifo_read = "/tmp/myfifo_c-s_" + std::to_string(msg_to_make._pid);
-                std::string name_fifo_write = "/tmp/myfifo_s-c_" + std::to_string(msg_to_make._pid);
-                mkfifo(name_fifo_read.c_str(), 0666);
-                mkfifo(name_fifo_write.c_str(), 0666);
-                int fd_write = open(name_fifo_write.c_str(), O_WRONLY);
-                int fd_read = open(name_fifo_read.c_str(), O_RDONLY | O_NONBLOCK);
-                _fdR.push_back(fd_read);
-                User tmp_user{"", msg_to_make._pid, fd_write, 0, 0, fd_read};
-                _users.insert({msg_to_make._pid, tmp_user});
-                auto elem = _users.find(msg_to_make._pid);
-                Message msg_to_client(Commands::success, "Succesfully connected", -1);
-                if (elem != _users.end()) {
-                    send_to(elem->second.pid, msg_to_client);
-                }
-            } else if (msg_to_make._cmd == Commands::find) {
-                std::cout << "Find opponent for " << _users[msg_to_make._pid].username << std::endl;
-                if (is_authorized_by_username(msg_to_make._data)) {
-                    if (search_by_username(std::string(msg_to_make._data))->second.game_status == 1) {
-                        Message msg_to_client1(Commands::success, "Succesfully connected1", -1);
-                        Message msg_to_client2(Commands::success, "Succesfully connected2", -1);
-                        auto *user1 = &_users[msg_to_make._pid];
-                        auto *user2 = &search_by_username(std::string(msg_to_make._data))->second;
-                        user1->game_status = 2;
-                        user2->game_status = 2;
-                        user1->game_index = active_game_counter;
-                        user2->game_index = active_game_counter;
-                        Game game(user1->pid, user2->pid, user1->username, user2->username);
-                        _active_games.insert({active_game_counter, game});
-                        active_game_counter++;
-                        send_to(user2->pid, msg_to_client2);
-                        send_to(user1->pid, msg_to_client1);
-                    } else {
-                        _users[msg_to_make._pid].game_status = 1;
-                    }
-                } else {
-                    Message msg_to_client(Commands::fail, "Opponent not online", -1);
-                    send_to(msg_to_make._pid, msg_to_client);
-                }
-            } else if (msg_to_make._cmd == Commands::place_ship) {
-                std::cout << msg_to_make._data << std::endl;
-                std::string column; int row; int type; int direction;
-                tokenize(std::string(msg_to_make._data), direction, column, row, type);
-                auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
-                if (deduction_proccess->pid1 == msg_to_make._pid) {
-                    std::cout << "Place on first" << std::endl;
-                    deduction_proccess->btf1->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
-                    Message msg_to_client1(Commands::success, "Succesfully placed", -1);
-                    send_to(msg_to_make._pid, msg_to_client1);
-                } else if (deduction_proccess->pid2 == msg_to_make._pid) {
-                    std::cout << "Place on second" << std::endl;
-                    deduction_proccess->btf2->place_ship(column.c_str()[0], row, Direction(direction), ShipType(type));
-                    Message msg_to_client1(Commands::success, "Succesfully placed", -1);
-                    send_to(msg_to_make._pid, msg_to_client1);
-                } else {
-                    std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
-                    continue;
-                }
-                deduction_proccess->btf1->print();
-                deduction_proccess->btf2->print();
-                
-            } else if (msg_to_make._cmd == Commands::ready_to_play) {
-                auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
-                Message msg_to_client1(Commands::success, "Ready to play", 1);
-                Message msg_to_client2(Commands::success, "Ready to play", 2);
-                if (deduction_proccess->pid1 == msg_to_make._pid && _users[deduction_proccess->pid2].game_status == 3) {
-                    send_to(deduction_proccess->pid1, msg_to_client1);
-                    send_to(deduction_proccess->pid2, msg_to_client2);
-                }
-                if (deduction_proccess->pid2 == msg_to_make._pid && _users[deduction_proccess->pid1].game_status == 3) {
-                    send_to(deduction_proccess->pid1, msg_to_client1);
-                    send_to(deduction_proccess->pid2, msg_to_client2);
-                }
-                _users[msg_to_make._pid].game_status = 3;
-            } else if (msg_to_make._cmd == Commands::kill_ship) {
-                auto *deduction_proccess = &_active_games[_users[msg_to_make._pid].game_index];
-                std::string column; int row; int type; int direction;
-                tokenize(std::string(msg_to_make._data), direction, column, row, type);
-                bool success;
-                if (deduction_proccess->pid1 == msg_to_make._pid) {
-                    success = deduction_proccess->btf2->try_kill(column.c_str()[0], row);
-                    if (success) {
-                        if (deduction_proccess->btf2->end_game_check()) {
-                            Message msg_to_client1(Commands::end_game, "You win", 1);
-                            Message msg_to_client2(Commands::end_game, "You lose", 2);
-                            updateResult(deduction_proccess->username1, 1);
-                            updateResult(deduction_proccess->username2, 0);
-                            _active_games.erase(_active_games.find(_users[msg_to_make._pid].game_index));
-                            _users[deduction_proccess->pid2].game_status = 0;
-                            _users[deduction_proccess->pid1].game_status = 0;
-                            _users[deduction_proccess->pid2].game_index = 0;
-                            _users[deduction_proccess->pid1].game_index = 0;
-                            send_to(deduction_proccess->pid1, msg_to_client1);
-                            send_to(deduction_proccess->pid2, msg_to_client2);
-                        } else {
-                            Message msg_to_client1(Commands::success, "Catch", 1);
-                            Message msg_to_client2(Commands::success, column, row);
-                            send_to(deduction_proccess->pid1, msg_to_client1);
-                            send_to(deduction_proccess->pid2, msg_to_client2);
-                        }
-                    } else {
-                        Message msg_to_client1(Commands::fail, "Failed attempt", 1);
-                        Message msg_to_client2(Commands::fail, column, row);
-                        send_to(deduction_proccess->pid1, msg_to_client1);
-                        send_to(deduction_proccess->pid2, msg_to_client2);
-                    }
-                } else if (deduction_proccess->pid2 == msg_to_make._pid) {
-                    success = deduction_proccess->btf1->try_kill(column.c_str()[0], row);
-                    if (success) {
-                        if (deduction_proccess->btf1->end_game_check()) {
-                            Message msg_to_client1(Commands::end_game, "You lose", 1);
-                            Message msg_to_client2(Commands::end_game, "You win", 2);
-                            _active_games.erase(_active_games.find(_users[msg_to_make._pid].game_index));
-                            _users[deduction_proccess->pid2].game_status = 0;
-                            _users[deduction_proccess->pid1].game_status = 0;
-                            _users[deduction_proccess->pid2].game_index = 0;
-                            _users[deduction_proccess->pid1].game_index = 0;
-                            updateResult(deduction_proccess->username2, 1);
-                            updateResult(deduction_proccess->username1, 0);
-                            send_to(deduction_proccess->pid1, msg_to_client1);
-                            send_to(deduction_proccess->pid2, msg_to_client2);
-                        } else {
-                            Message msg_to_client2(Commands::success, "Catch", 1);
-                            Message msg_to_client1(Commands::success, column, row);
-                            send_to(deduction_proccess->pid1, msg_to_client1);
-                            send_to(deduction_proccess->pid2, msg_to_client2);
-                        }
-                    } else {
-                        Message msg_to_client2(Commands::fail, "Failed attempt", 1);
-                        Message msg_to_client1(Commands::fail, column, row);
-                        send_to(deduction_proccess->pid1, msg_to_client1);
-                        send_to(deduction_proccess->pid2, msg_to_client2);
-                    }
-                } else {
-                    std::cout << "Proccess was disconnected and it was last attempt to do smt" << std::endl;
-                }
-                deduction_proccess->btf1->print();
-                deduction_proccess->btf2->print();
+            switch (msg_to_make._cmd) {
+                case connect:
+                    makeConnectionBetweenServerAndClient(msg_to_make);
+                    break;
+                case create_user:
+                    userCreatingRoutine(msg_to_make);
+                    break;
+                case clear:
+                    clearAllDependenciesOfUser(msg_to_make);
+                    break;
+                case login:
+                    CheckAvailableUsernameAndLoginAccount(msg_to_make);
+                    break;
+                case stats:
+                    sendToClientInfoAboutStats(msg_to_make);
+                    break;
+                case find:
+                    findOpponentForUser(msg_to_make);
+                    break;
+                case place_ship:
+                    placeShipOnBattleField(msg_to_make);
+                    break;
+                case ready_to_play:
+                    makeUsersStatusToGameActive(msg_to_make);
+                    break;
+                case kill_ship:
+                    userAttackOpponentBattleField(msg_to_make);
+                    break;
             }
         }
     }

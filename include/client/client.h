@@ -22,9 +22,11 @@ class Client {
         bool gameOperating(const std::string &login);
         void textArt();
         bool isAuthorized();
+        bool checkCorrectUsername(const std::string &username);
     private:
         std::string myfifo_read, myfifo_write;
         std::string username;
+        const std::string myfifo_write_default = "/tmp/myfifo_c-s_def";
         int fdR, fdW;
 };
 

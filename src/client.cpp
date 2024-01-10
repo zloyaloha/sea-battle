@@ -1,7 +1,5 @@
 #include "client.h"
 
-std::string myfifo_write_default = "/tmp/myfifo_c-s_def";
-
 Client::Client(int pid) {
     std::string username = "";
     std::string myfifo_read = "/tmp/myfifo_s-c_" + std::to_string(pid);
@@ -137,7 +135,11 @@ bool GameOperator::gamingRoutine(int whoStarted) {
 bool Client::loginToAccount(const std::string &login) {
     if (username != "") {
         std::cout << "\nYou are already loged in " + username << ' ' << '\n' << std::endl;
-        return 0;
+        return false;
+    }
+    if (!checkCorrectUsername(login)) {
+        std::cout << "Don't try to inject BD" << std::endl;
+        return false;
     }
     std::string reply;
     Message msg_to_server(Commands::login, login, getpid());
@@ -147,17 +149,20 @@ bool Client::loginToAccount(const std::string &login) {
     if (reply_from_server._cmd == success) {
         std::cout << "\nAccout succesfully login in " << reply_from_server._data << std::endl;
         username = login;
-        return 1;
+        return true;
     } else if (reply_from_server._cmd == fail) {
         std::cout << '\n' << reply_from_server._data << std::endl;
-        return 0;
+        return false;
     } else {
-        std::cout << '\n' << "Unknown command" << std::endl;
-        return 0;
+        throw std::logic_error("unknown command");
     }
 }
 
 bool Client::createAccount(const std::string &login) {
+    if (!checkCorrectUsername(login)) {
+        std::cout << "Don't try to inject BD" << std::endl;
+        return false;
+    }
     std::string reply;
     Message msg_to_server(Commands::create_user, login, getpid());
     Message reply_from_server(create_user, reply, -1);
@@ -165,13 +170,12 @@ bool Client::createAccount(const std::string &login) {
     recv(fdR, reply_from_server);
     if (reply_from_server._cmd == success) {
         std::cout << "\nAccount succesfuly created " << reply_from_server._data << std::endl;
-        return 1;
+        return true;
     } else if (reply_from_server._cmd == fail) {
         std::cout << "\nAccount is exist already " << reply_from_server._data << std::endl;
-        return 0;
+        return false;
     } else {
-        std::cout << "\nSomething get wrong" << std::endl;
-        return 0;
+        throw std::logic_error("unknown command");
     }
 }
 
@@ -186,13 +190,12 @@ bool Client::getStats() {
     if (reply_from_server._cmd == success) {
         std::cout << "\nStats of: " << username << std::endl;
         std::cout << "Win-Lose: " << reply_from_server._data << std::endl;
-        return 1;
+        return true;
     } else if (reply_from_server._cmd == fail) {
         std::cout << "Shit happened " << reply_from_server._data << std::endl;
-        return 0;
+        return false;
     } else {
-        std::cout << "Shit happened " << reply_from_server._data << std::endl;
-        return 0;
+        throw std::logic_error("unknown command");
     }
 }
 
@@ -205,9 +208,21 @@ bool Client::isAuthorized() {
     }
 }
 
+bool Client::checkCorrectUsername(const std::string &username) {
+    for (char c: username) {
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            return false;
+        }
+    }
+    return true && (username.size() <= 50);
+}
+
 bool Client::gameOperating(const std::string &login) {
     if (!isAuthorized()) {
         return 0;
+    }
+    if (!checkCorrectUsername(login)) {
+        std::cout << "Don't try to inject BD" << std::endl;
     }
     if (username == login) {
         std::cout << "You can't play with yourself" << std::endl;

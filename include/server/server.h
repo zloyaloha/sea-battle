@@ -46,14 +46,27 @@ class Server {
         auto search_by_username(const std::string &username);
         bool is_authorized_by_username(const std::string &username);
         bool is_authorized_by_pid(const int &pid);
+        void tokenize(std::string input, int &direction, std::string &column, int &row, int &type);
+
         void try_recv();
         void send_to(int pid, Message &msg);
         void exec();
-        void updateResult(const std::string& username, bool isWin);
-        void tokenize(std::string input, int &direction, std::string &column, int &row, int &type);
+
+        void updateResultInBD(const std::string& username, bool isWin);
         std::pair<int, int> user_stats(const std::string& username);
         bool autorize(const std::string &username);
         bool add_user(const std::string &username);
+
+        void userCreatingRoutine(const Message &msg_for_making_new_user);
+        void clearAllDependenciesOfUser(const Message &msg_for_clear);
+        void CheckAvailableUsernameAndLoginAccount(const Message &msg_for_login);
+        void sendToClientInfoAboutStats(const Message &msg_for_stats);
+        void makeConnectionBetweenServerAndClient(const Message &msg_for_connect);
+        void findOpponentForUser(const Message &msg_for_find);
+        void placeShipOnBattleField(const Message &msg_for_place_ship);
+        void makeUsersStatusToGameActive(const Message &msg_for_change_status);
+        void attackConcreteUsername(Battlefield *btf, Game *deduction_game, const Message &msg_for_attack);
+        void userAttackOpponentBattleField(const Message &msg_for_attack);
     private:
         std::vector<int> _fdR;
         std::unordered_map<int, User> _users;
